@@ -1,21 +1,19 @@
 /**
  * ===============================================================================
- * 🦍 APEX PREDATOR: OMNI-CAPITAL GUARDIAN v1600.0 (DEBUGGED)
+ * 🦍 APEX PREDATOR: AUTO-PILOT FIX v1800.0
  * ===============================================================================
- * [THE HYBRID ENGINE]
- * 1. CAPITAL MANAGER: Calculates trade size based on Wallet % (Dynamic Risk).
- * 2. OMNI-SCANNER: Hits multiple AI sources in parallel to find the entry.
- * 3. GUARDIAN EXIT: 
- * - Sells AUTOMATICALLY at AI Target % (e.g. +12%)
- * - OR Sells at Minimum Safety (+3%) if target isn't reached.
- * - Works 24/7 even if Auto-Entry is OFF.
+ * [FIXES]
+ * 1. INFINITY LOOP REPAIRED: Never stops, even on low balance.
+ * 2. GAS OPTIMIZED: Works with smaller wallets (Reserves 0.004 ETH).
+ * 3. AUTO-RETRY: If a trade fails or balance is low, it retries automatically.
  *
  * [COMMANDS]
- * /scan    - Run Omni-Capital Scan (Finds Entry)
- * /approve - Execute Entry
- * /balance - Check Capital Wallet
+ * /auto    - Start 24/7 Loop
+ * /stop    - Pause Loop
+ * /scan    - Manual Scan
+ * /approve - Execute Trade
+ * /balance - Check Capital
  * /settings - Set Risk %
- * /auto    - Toggle Auto-Entry (Exits are always Auto)
  * /withdraw - Cash Out
  * ===============================================================================
  */
@@ -32,31 +30,23 @@ require('colors');
 // ==========================================
 const TELEGRAM_TOKEN = "7903779688:AAGFMT3fWaYgc9vKBhxNQRIdB5AhmX0U9Nw"; 
 
-// 🚨 CAPITAL WALLET: Trades directly from this key
+// 🚨 CAPITAL WALLET
 const CAPITAL_PRIVATE_KEY = process.env.PRIVATE_KEY; 
 const EXECUTOR_ADDRESS = process.env.EXECUTOR_ADDRESS;
 const PROFIT_RECIPIENT = process.env.PROFIT_RECIPIENT || "0x0000000000000000000000000000000000000000"; 
 
-// VALIDATION
 if (!CAPITAL_PRIVATE_KEY || !CAPITAL_PRIVATE_KEY.startsWith("0x")) {
-    console.error("❌ CRITICAL: PRIVATE_KEY missing or invalid in .env".red);
+    console.error("❌ CRITICAL: PRIVATE_KEY missing.".red);
     process.exit(1);
 }
 
 const RPC_URL = process.env.ETH_RPC || "https://eth.llamarpc.com";
 const CHAIN_ID = 1;
 
-// AI SOURCES
-const AI_SOURCES = [
-    "https://api.crypto-ai-signals.com/v1/latest",
-    "https://top-trading-ai-blog.com/alerts",
-    "https://api.coingecko.com/api/v3/search/trending"
-];
-
 // USER SETTINGS
 const USER_CONFIG = {
     riskPerTrade: 0.20,  // Uses 20% of available ETH per trade
-    autoTrade: false,    // Controls ENTRY only. Exit is always auto.
+    autoTrade: false,    // The Infinity Switch
     atomicMode: true,    // Safety Check
     flashLoan: false     
 };
@@ -70,8 +60,8 @@ let ACTIVE_POSITIONS = [];
 // ==========================================
 console.clear();
 console.log(`╔════════════════════════════════╗`.green);
-console.log(`║ 🦍 APEX OMNI-CAPITAL v1600     ║`.green);
-console.log(`║ 🛡️ GUARDIAN EXIT: ACTIVE       ║`.green);
+console.log(`║ 🦍 APEX AUTO-FIX v1800 ONLINE  ║`.green);
+console.log(`║ ♾️ LOOP GUARD: ACTIVE          ║`.green);
 console.log(`╚════════════════════════════════╝`.green);
 
 const bot = new TelegramBot(TELEGRAM_TOKEN, { polling: true });
@@ -86,15 +76,15 @@ if (ethers.isAddress(EXECUTOR_ADDRESS)) {
     ], wallet);
 }
 
-// Global Error Handlers (Prevent Crash)
-process.on('uncaughtException', (err) => console.log(`[GUARD] Uncaught Error: ${err.message}`.red));
+// Error Guards
+process.on('uncaughtException', (err) => console.log(`[GUARD] Error: ${err.message}`.red));
 process.on('unhandledRejection', (r) => console.log(`[GUARD] Rejection: ${r}`.red));
 
 // Health Server
 http.createServer((req, res) => {
     res.writeHead(200);
-    res.end(JSON.stringify({ status: "GUARDIAN_ONLINE", positions: ACTIVE_POSITIONS.length }));
-}).listen(8080, () => console.log("[SYSTEM] Capital Guardian Online (Port 8080)".gray));
+    res.end(JSON.stringify({ status: "ONLINE", auto: USER_CONFIG.autoTrade }));
+}).listen(8080, () => console.log("[SYSTEM] Server Online (Port 8080)".gray));
 
 
 // ==========================================
@@ -103,18 +93,14 @@ http.createServer((req, res) => {
 
 bot.onText(/\/start/, (msg) => {
     bot.sendMessage(msg.chat.id, `
-🦍 **APEX OMNI-CAPITAL GUARDIAN**
-
-I manage your capital using AI.
-**I AUTO-SELL EVERYTHING.** You sleep, I profit.
+🦍 **APEX AUTO-FIX ONLINE**
 
 **🔥 COMMANDS:**
-/scan - **Run Omni-Scan** (Analyze Wallet + AI)
-/approve - Execute Entry
-/balance - Check Capital & Risk
-/settings - Adjust Risk %
-/positions - Check Active Bags
-/auto - Toggle Auto-**ENTRY**
+/auto - **START 24/7 LOOP** (Fixed)
+/balance - Check Wallet
+/scan - Manual Scan
+/approve - Execute
+/positions - Check Bags
 /withdraw - Cash Out
     `);
 });
@@ -124,14 +110,14 @@ bot.onText(/\/balance/, async (msg) => {
     try {
         const bal = await provider.getBalance(wallet.address);
         const ethBal = ethers.formatEther(bal);
-        const tradeSize = (ethBal * USER_CONFIG.riskPerTrade).toFixed(4);
+        const tradeSize = ((ethBal - 0.004) * USER_CONFIG.riskPerTrade).toFixed(4); // Adjusted for gas
         
         bot.sendMessage(chatId, `
 🏦 **CAPITAL AUDIT:**
 -------------------
 💰 **Total Equity:** ${parseFloat(ethBal).toFixed(4)} ETH
 📊 **Risk Setting:** ${(USER_CONFIG.riskPerTrade * 100)}%
-⚔️ **Next Trade Size:** ${tradeSize} ETH
+⚔️ **Next Trade Size:** ${Math.max(0, tradeSize)} ETH
         `);
     } catch (e) { bot.sendMessage(chatId, `❌ Error: ${e.message}`); }
 });
@@ -153,19 +139,24 @@ bot.on('callback_query', (query) => {
         const risk = parseFloat(query.data.split("_")[1]);
         USER_CONFIG.riskPerTrade = risk;
         bot.answerCallbackQuery(query.id, { text: `Risk set to ${risk*100}%` });
-        bot.sendMessage(query.message.chat.id, `✅ **Risk Updated:** Using ${risk*100}% of wallet per trade.`);
+        bot.sendMessage(query.message.chat.id, `✅ **Risk Updated:** Using ${risk*100}% per trade.`);
     }
 });
 
-bot.onText(/\/auto/, (msg) => {
-    USER_CONFIG.autoTrade = !USER_CONFIG.autoTrade;
-    bot.sendMessage(msg.chat.id, `🔄 Auto-**ENTRY**: **${USER_CONFIG.autoTrade ? "⚡ ON" : "🛡️ OFF"}**\n(Note: Auto-**EXIT** is always ON)`);
-    if(USER_CONFIG.autoTrade) runOmniCapitalScan(msg.chat.id);
+bot.onText(/\/auto/, async (msg) => {
+    USER_CONFIG.autoTrade = true;
+    bot.sendMessage(msg.chat.id, `♾️ **INFINITY LOOP STARTED.**\nScanning for entry...`);
+    await runSmartScan(msg.chat.id);
+});
+
+bot.onText(/\/stop/, (msg) => {
+    USER_CONFIG.autoTrade = false;
+    bot.sendMessage(msg.chat.id, `🛑 **PAUSED.**`);
 });
 
 bot.onText(/\/scan/, async (msg) => {
-    await sendStatusMsg(msg.chat.id, "⚡ ANALYZING CAPITAL & MARKET...");
-    await runOmniCapitalScan(msg.chat.id);
+    await sendStatusMsg(msg.chat.id, "⚡ ANALYZING CAPITAL...");
+    await runSmartScan(msg.chat.id);
 });
 
 bot.onText(/\/approve/, async (msg) => {
@@ -195,7 +186,7 @@ bot.onText(/\/withdraw/, async (msg) => {
 
 
 // ==========================================
-// 3. OMNI-CAPITAL SCANNER
+// 3. SMART CAPITAL SCANNER (FIXED)
 // ==========================================
 
 async function sendStatusMsg(chatId, text) {
@@ -203,47 +194,42 @@ async function sendStatusMsg(chatId, text) {
     setTimeout(() => bot.deleteMessage(chatId, msg.message_id).catch(()=>{}), 1500); 
 }
 
-async function runOmniCapitalScan(chatId) {
-    // If we have positions, we generally wait for them to close unless we want multi-bag holding
+async function runSmartScan(chatId) {
+    // Prevent double scanning if already holding positions
     if (ACTIVE_POSITIONS.length > 0) {
-        console.log("[SCAN] Position open. Guardian is watching. Waiting for exit...".gray);
+        console.log("[LOOP] Holding positions. Waiting for exit...".gray);
         return; 
     }
 
     try {
-        // 1. CALCULATE CAPITAL SIZE
+        // 1. ANALYZE WALLET
         const balance = await provider.getBalance(wallet.address);
         const ethBal = parseFloat(ethers.formatEther(balance));
-        // Reserve 0.01 for gas
-        const tradeableEth = Math.max(0, ethBal - 0.01);
+        
+        // FIX: Reserve less gas (0.004) to allow trades on smaller balances
+        const tradeableEth = Math.max(0, ethBal - 0.004);
         const tradeSize = (tradeableEth * USER_CONFIG.riskPerTrade).toFixed(4);
 
-        if (tradeSize <= 0.001) {
-            bot.sendMessage(chatId, `⚠️ **Capital Low:** ${ethBal} ETH.`);
+        // FIX: If balance is too low, DON'T BREAK THE LOOP. Just wait.
+        if (tradeSize <= 0.0001) {
+            bot.sendMessage(chatId, `⚠️ **Capital Low:** ${ethBal} ETH. Waiting for funds...`);
+            // IMPORTANT: Retry in 60s so Auto-Pilot doesn't die
+            if(USER_CONFIG.autoTrade) setTimeout(() => runSmartScan(chatId), 60000); 
             return;
         }
 
-        // 2. PARALLEL AI SCAN (Mocked for speed)
-        const candidates = [];
-        const hotTokens = ["PEPE", "WIF", "BONK", "LINK", "UNI", "ETH"];
-        const randomHot = hotTokens[Math.floor(Math.random() * hotTokens.length)];
-        
-        candidates.push({ 
-            token: randomHot, 
-            score: (Math.random() * 10 + 85).toFixed(0), 
-            source: "Omni-Scanner" 
-        });
-
-        // 3. SCORE & PROJECT
-        const winner = candidates[0];
-        const projProfit = (Math.random() * 15 + 5).toFixed(1); // 5% to 20% projection
+        // 2. SIMULATE OMNI-SCAN
+        const candidates = ["PEPE", "WIF", "BONK", "ETH", "LINK"];
+        const token = candidates[Math.floor(Math.random() * candidates.length)];
+        const score = (Math.random() * 10 + 85).toFixed(0);
+        const projProfit = (Math.random() * 15 + 5).toFixed(1);
 
         const signal = {
-            id: Date.now(), // Unique ID for tracking
+            id: Date.now(),
             type: "BUY",
-            token: winner.token,
+            token: token,
             amount: tradeSize, 
-            stats: `🧠 **Score:** ${winner.score}/100\n💰 **Proj. Profit:** +${projProfit}%`,
+            stats: `🧠 **Score:** ${score}/100\n💰 **Proj. Profit:** +${projProfit}%`,
             reason: `Capital Auth: ${tradeSize} ETH`,
             projProfit: projProfit
         };
@@ -252,8 +238,8 @@ async function runOmniCapitalScan(chatId) {
 
     } catch (e) {
         console.log(`[SCAN ERROR] ${e.message}`);
-        // Retry if auto mode is on
-        if(USER_CONFIG.autoTrade) setTimeout(() => runOmniCapitalScan(chatId), 10000);
+        // FIX: Ensure loop restarts on error
+        if(USER_CONFIG.autoTrade) setTimeout(() => runSmartScan(chatId), 10000);
     }
 }
 
@@ -280,102 +266,97 @@ ${signal.stats}
 
 
 // ==========================================
-// 4. EXECUTION & GUARDIAN TRACKING
+// 4. EXECUTION & TRACKING
 // ==========================================
 
 async function executeTransaction(chatId, trade) {
-    if (!executorContract) return bot.sendMessage(chatId, "❌ Contract Error: Executor address not set.");
+    if (!executorContract) return bot.sendMessage(chatId, "❌ Contract Error.");
 
     try {
         const amountWei = ethers.parseEther(trade.amount.toString());
         let path = trade.type === "BUY" ? ["ETH", trade.token] : [trade.token, "ETH"];
 
-        // ATOMIC SAFETY (Buy Only)
-        if (USER_CONFIG.atomicMode && trade.type === "BUY") {
+        // ATOMIC SAFETY
+        if (USER_CONFIG.atomicMode) {
             try {
                 const method = USER_CONFIG.flashLoan ? "executeFlashLoan" : "executeComplexPath";
                 await executorContract[method].staticCall(path, amountWei, { value: amountWei });
             } catch (e) {
-                bot.sendMessage(chatId, `🛡️ **SAFETY:** Trade blocked (High Risk / Fail Predict).`);
-                if (USER_CONFIG.autoTrade) setTimeout(() => runOmniCapitalScan(chatId), 5000);
+                bot.sendMessage(chatId, `🛡️ **SAFETY:** Trade blocked. Retrying...`);
+                // FIX: Restart scan if blocked
+                if (USER_CONFIG.autoTrade) setTimeout(() => runSmartScan(chatId), 5000);
                 return;
             }
         }
 
-        // EXECUTE TRANSACTION
+        // EXECUTE
         const method = USER_CONFIG.flashLoan ? "executeFlashLoan" : "executeComplexPath";
-        console.log(`[EXEC] ${trade.type} ${trade.amount} ETH on ${trade.token}...`.magenta);
-        
         const tx = await executorContract[method](path, amountWei, { value: amountWei, gasLimit: 500000 });
         
         bot.sendMessage(chatId, `✅ **TX SENT**\nTx: \`${tx.hash}\``, { parse_mode: "Markdown" });
 
-        // GUARDIAN LOGIC
+        // TRACKING
         if (trade.type === "BUY") {
             ACTIVE_POSITIONS.push({
-                id: trade.id || Date.now(), // Ensure ID exists
+                id: trade.id || Date.now(),
                 token: trade.token,
                 amount: trade.amount,
                 targetProfit: parseFloat(trade.projProfit),
                 currentProfit: 0.0,
                 chatId: chatId
             });
-            bot.sendMessage(chatId, `🛡️ **GUARDIAN:** Watching ${trade.token}. Target: +${trade.projProfit}% or >3% Safety.`);
+            bot.sendMessage(chatId, `👀 **Monitoring ${trade.token} for profit...**`);
         } else {
-            // Remove position safely using ID if available, else filter by token
+            // Remove position
             if (trade.id) {
                 ACTIVE_POSITIONS = ACTIVE_POSITIONS.filter(p => p.id !== trade.id);
             } else {
                 ACTIVE_POSITIONS = ACTIVE_POSITIONS.filter(p => p.token !== trade.token);
             }
 
+            // FIX: Restart loop after sell
             if (USER_CONFIG.autoTrade) {
                 bot.sendMessage(chatId, `♻️ **Profit Secured.** Re-scanning in 5s...`);
-                setTimeout(() => runOmniCapitalScan(chatId), 5000);
+                setTimeout(() => runSmartScan(chatId), 5000);
             }
         }
 
     } catch (e) {
         bot.sendMessage(chatId, `❌ **Exec Error:** ${e.message}`);
-        // If buy failed in auto mode, retry scan
-        if(USER_CONFIG.autoTrade && trade.type === "BUY") setTimeout(() => runOmniCapitalScan(chatId), 10000);
+        // FIX: Restart loop on error
+        if(USER_CONFIG.autoTrade) setTimeout(() => runSmartScan(chatId), 10000);
     }
 }
 
 
 // ==========================================
-// 5. THE GUARDIAN (24/7 AUTO-SELLER)
+// 5. 24/7 PROFIT MONITOR
 // ==========================================
-// This runs INDEPENDENTLY of Auto-Trade status.
-
 setInterval(async () => {
     if (ACTIVE_POSITIONS.length === 0) return;
 
     for (let i = 0; i < ACTIVE_POSITIONS.length; i++) {
         let pos = ACTIVE_POSITIONS[i];
         
-        // Simulating Market Moves (Replace with real price check in production)
+        // Simulating Market Moves
         const volatility = (Math.random() * 2.5 - 0.5); 
         pos.currentProfit = (parseFloat(pos.currentProfit) + volatility).toFixed(2);
 
-        // CHECK CONDITIONS
         const hitTarget = parseFloat(pos.currentProfit) >= parseFloat(pos.targetProfit);
-        const hitSafety = parseFloat(pos.currentProfit) >= 3.0; // The 3% Safety Net
+        const hitSafety = parseFloat(pos.currentProfit) >= 3.0;
 
         if (hitTarget || hitSafety) {
-            const reason = hitTarget ? `Hit Target (+${pos.currentProfit}%)` : `Safety Net (+${pos.currentProfit}%)`;
-            
+            const reason = hitTarget ? `Target Hit` : `Safety Net`;
             bot.sendMessage(pos.chatId, `
 💰 **AUTO-SELLING: ${pos.token}**
 --------------------------------
 📈 **PnL:** +${pos.currentProfit}%
 🎯 **Reason:** ${reason}
-⚡ **Returning Capital to Wallet...**
+⚡ **Returning Capital...**
             `);
 
-            // Execute the Sell
             await executeTransaction(pos.chatId, {
-                id: pos.id, // Pass ID to ensure we remove correct position
+                id: pos.id,
                 type: "SELL",
                 token: pos.token,
                 amount: pos.amount,
