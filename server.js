@@ -1,12 +1,6 @@
 /**
  * ===============================================================================
- * 🦍 APEX PREDATOR: CONFIRMATION ENGINE v3100.0
- * ===============================================================================
- * [RELIABILITY UPGRADES]
- * 1. TRANSACTION WAITING: Uses tx.wait() to ensure the block is mined.
- * 2. RECEIPT VALIDATION: Checks 'status === 1' before marking a buy as successful.
- * 3. ETHERSCAN LOGGING: Provides a direct link to the blockchain for every trade.
- * 4. ERROR DIAGNOSTICS: Reports exactly why a trade failed (Gas, Slippage, etc).
+ * 🦍 APEX PREDATOR: OMEGA TOTALITY v28000.0 (Ethers v6)
  * ===============================================================================
  */
 
@@ -17,123 +11,142 @@ const http = require('http');
 const TelegramBot = require('node-telegram-bot-api');
 require('colors');
 
-const TELEGRAM_TOKEN = "7903779688:AAGFMT3fWaYgc9vKBhxNQRIdB5AhmX0U9Nw"; 
-const PRIVATE_KEY = process.env.PRIVATE_KEY; 
-const RPC_URL = process.env.ETH_RPC || "https://eth.llamarpc.com"; 
+const TELEGRAM_TOKEN = "7903779688:AAGFMT3fWaYgc9vKBhxNQRIdB5AhmX0U9Nw";
+const PRIVATE_KEY = process.env.PRIVATE_KEY;
 
-const ROUTER_ADDR = "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D"; 
-const WETH_ADDR = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
+// Failover RPC Pool for 100% Uptime
+const RPC_POOL = [
+    "https://rpc.mevblocker.io", 
+    "https://eth.llamarpc.com",
+    "https://rpc.ankr.com/eth"
+];
 
-// ✅ YOUR TOKEN MAP
+const ROUTER_ADDR = "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D";
+const WETH = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
+
 const TOKEN_MAP = {
     "PEPE": "0x6982508145454Ce325dDbE47a25d4ec3d2311933",
     "LINK": "0x514910771AF9Ca656af840dff83E8264EcF986CA",
-    "WIF":  "0x...", // Ensure this is the correct ETH contract for WIF
     "SHIB": "0x95aD61b0a150d79219dCF64E1E6Cc01f0B64C4cE"
 };
 
-const ROUTER_ABI = [
-    "function swapExactETHForTokens(uint amountOutMin, address[] calldata path, address to, uint deadline) external payable returns (uint[] memory amounts)",
-    "function swapExactTokensForETH(uint amountIn, uint amountOutMin, address[] calldata path, address to, uint deadline) external returns (uint[] memory amounts)",
-    "function getAmountsOut(uint amountIn, address[] calldata path) external view returns (uint[] memory amounts)"
-];
-const ERC20_ABI = [
-    "function approve(address spender, uint256 amount) external returns (bool)",
-    "function balanceOf(address account) external view returns (uint256)"
-];
-
+// ==========================================
+// 1. ENGINE INITIALIZATION
+// ==========================================
+let rpcIdx = 0;
+let provider = new JsonRpcProvider(RPC_POOL[rpcIdx]);
+let wallet = new Wallet(PRIVATE_KEY, provider);
 const bot = new TelegramBot(TELEGRAM_TOKEN, { polling: true });
-const provider = new JsonRpcProvider(RPC_URL, 1);
-const wallet = new Wallet(PRIVATE_KEY, provider);
-const router = new Contract(ROUTER_ADDR, ROUTER_ABI, wallet);
 
-let ACTIVE_POSITION = null;
+let router = new Contract(ROUTER_ADDR, [
+    "function swapExactETHForTokens(uint min, address[] path, address to, uint dead) external payable returns (uint[])",
+    "function getAmountsOut(uint amt, address[] path) external view returns (uint[])"
+], wallet);
+
+const SYSTEM = {
+    isLocked: false,
+    nonce: null,
+    risk: 0.15,
+    heartbeat: Date.now()
+};
 
 // ==========================================
-// EXECUTION WITH CONFIRMATION
+// 2. THE ESCALATOR (CERTAINTY ENGINE)
 // ==========================================
 
-async function executeBuy(chatId, token, amountEth) {
-    try {
-        bot.sendMessage(chatId, `🚀 **INITIATING BUY: ${token.symbol}**\nAllocating ${amountEth} ETH...`);
+async function forceConfirm(chatId, tokenSym, txParams) {
+    let currentBribe = txParams.initialBribe;
+    let attempt = 1;
 
-        const amountInWei = ethers.parseEther(amountEth.toFixed(18));
-        const path = [WETH_ADDR, token.address];
-        const deadline = Math.floor(Date.now() / 1000) + 300;
+    const broadcast = async (bribe) => {
+        const fee = await provider.getFeeData();
+        return await router.swapExactETHForTokens(0, txParams.path, wallet.address, txParams.deadline, {
+            value: txParams.value,
+            gasLimit: 350000,
+            maxPriorityFeePerGas: bribe,
+            maxFeePerGas: (fee.maxFeePerGas || fee.gasPrice) + bribe,
+            nonce: SYSTEM.nonce
+        });
+    };
 
-        // 1. Send Transaction
-        const tx = await router.swapExactETHForTokens(
-            0, // Min amount (Set higher for slippage protection)
-            path,
-            wallet.address,
-            deadline,
-            { value: amountInWei, gasLimit: 300000 }
-        );
+    let tx = await broadcast(currentBribe);
+    bot.sendMessage(chatId, `📡 **STRIKE 1 [BROADCASTED]:** ${tokenSym}\nNonce: ${SYSTEM.nonce}\n[Etherscan](https://etherscan.io/tx/${tx.hash})`, { parse_mode: "Markdown" });
 
-        bot.sendMessage(chatId, `⏳ **Transaction Pending...**\nHash: [View on Etherscan](https://etherscan.io/tx/${tx.hash})`, { parse_mode: "Markdown" });
+    while (true) {
+        try {
+            // Wait for 1 block (12s)
+            const receipt = await Promise.race([
+                tx.wait(1),
+                new Promise((_, reject) => setTimeout(() => reject(new Error("STALL")), 13000))
+            ]);
 
-        // 2. WAIT FOR CONFIRMATION
-        const receipt = await tx.wait();
-
-        if (receipt.status === 1) {
-            // SUCCESS
-            const tokenContract = new Contract(token.address, ERC20_ABI, wallet);
-            const bal = await tokenContract.balanceOf(wallet.address);
-
-            ACTIVE_POSITION = {
-                symbol: token.symbol,
-                address: token.address,
-                tokensHeld: bal,
-                entryEth: amountEth,
-                chatId: chatId
-            };
-
-            bot.sendMessage(chatId, `✅ **TRADE CONFIRMED!**\nBlock: ${receipt.blockNumber}\nTokens: ${ethers.formatUnits(bal, 18)} ${token.symbol}`);
-            console.log(`[SUCCESS] Buy Confirmed for ${token.symbol}`.green);
-        } else {
-            // REVERTED
-            bot.sendMessage(chatId, `❌ **TRADE REVERTED.** The blockchain rejected the transaction. Check gas or slippage.`);
-            console.log(`[FAILED] Transaction Reverted`.red);
+            if (receipt && receipt.status === 1n) {
+                bot.sendMessage(chatId, `✅ **CONFIRMED.** Block: ${receipt.blockNumber}`);
+                return receipt;
+            }
+        } catch (err) {
+            if (err.message === "STALL" && attempt < 4) {
+                attempt++;
+                currentBribe = (currentBribe * 200n) / 100n; // DOUBLE the bribe to jump the queue
+                bot.sendMessage(chatId, `⚠️ **TX STALLED.** Escalating Bribe to ${ethers.formatUnits(currentBribe, 'gwei')} Gwei...`);
+                tx = await broadcast(currentBribe);
+            } else { throw err; }
         }
-
-    } catch (e) {
-        bot.sendMessage(chatId, `⚠️ **Execution Error:** ${e.message}`);
-        console.error(e);
     }
 }
 
 // ==========================================
-// SCANNER & COMMANDS
+// 3. AUTOPILOT RECOVERY LOOP
 // ==========================================
 
-async function runScan(chatId) {
-    if (ACTIVE_POSITION) return;
+async function runAutopilot(chatId) {
+    if (SYSTEM.isLocked) return;
+    SYSTEM.isLocked = true;
+    SYSTEM.heartbeat = Date.now();
 
     try {
-        const bal = await provider.getBalance(wallet.address);
-        const ethBal = parseFloat(ethers.formatEther(bal));
-        const tradeAmount = (ethBal - 0.01) * 0.10; // Risk 10%
-
-        if (tradeAmount < 0.005) return;
-
-        // Fetch Trending (Example Logic)
-        const res = await axios.get('https://api.coingecko.com/api/v3/search/trending');
-        const top = res.data.coins[0].item;
-        
-        if (TOKEN_MAP[top.symbol]) {
-            await executeBuy(chatId, { symbol: top.symbol, address: TOKEN_MAP[top.symbol] }, tradeAmount);
+        // Handle potential RPC rate limits
+        try {
+            SYSTEM.nonce = await provider.getTransactionCount(wallet.address, "latest");
+        } catch (e) {
+            if (e.message.includes("429")) {
+                rpcIdx = (rpcIdx + 1) % RPC_POOL.length;
+                provider = new JsonRpcProvider(RPC_POOL[rpcIdx]);
+                wallet = new Wallet(PRIVATE_KEY, provider);
+                router = router.connect(wallet);
+                console.log(`[RPC] Rotated to ${RPC_POOL[rpcIdx]}`.yellow);
+            }
+            throw e;
         }
-    } catch (e) { console.log("Scan wait..."); }
+
+        const bal = await provider.getBalance(wallet.address);
+        const ethVal = parseFloat(ethers.formatEther(bal));
+        if (ethVal < 0.015) { SYSTEM.isLocked = false; return; }
+
+        const res = await axios.get('https://api.coingecko.com/api/v3/search/trending');
+        const coin = res.data.coins[0].item.symbol.toUpperCase();
+
+        if (TOKEN_MAP[coin]) {
+            const fee = await provider.getFeeData();
+            const txParams = {
+                path: [WETH, TOKEN_MAP[coin]],
+                deadline: Math.floor(Date.now() / 1000) + 300,
+                value: ethers.parseEther(((ethVal - 0.01) * SYSTEM.risk).toFixed(18)),
+                initialBribe: (fee.maxPriorityFeePerGas * 150n) / 100n
+            };
+
+            await forceConfirm(chatId, coin, txParams);
+        }
+    } catch (e) { console.log(`[AUTO] Restarting...`.gray); }
+    finally { SYSTEM.isLocked = false; }
 }
 
-bot.onText(/\/auto/, (msg) => {
-    bot.sendMessage(msg.chat.id, "♾️ **Confirmation Engine Active.** Starting Loop...");
-    setInterval(() => runScan(msg.chat.id), 30000);
-});
+// Auto-trigger every 30s
+setInterval(() => runAutopilot("7903779688"), 30000);
 
 bot.onText(/\/status/, async (msg) => {
     const bal = await provider.getBalance(wallet.address);
-    bot.sendMessage(msg.chat.id, `💰 **Wallet:** ${ethers.formatEther(bal)} ETH\nStatus: ${ACTIVE_POSITION ? "Locked in " + ACTIVE_POSITION.symbol : "Scanning"}`);
+    bot.sendMessage(msg.chat.id, `🛡️ **OMEGA TOTALITY v28000 ONLINE**\nWallet: ${parseFloat(ethers.formatEther(bal)).toFixed(4)} ETH\nRPC: ${RPC_POOL[rpcIdx]}\nAutopilot: ACTIVE`);
 });
 
-http.createServer((req, res) => res.end("Ready")).listen(8080);
+http.createServer((req, res) => res.end("V28000_RUNNING")).listen(8080);
