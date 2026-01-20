@@ -1,6 +1,6 @@
 /**
  * ===============================================================================
- * 🦍 APEX PREDATOR: OMNI-CAPITAL GUARDIAN v1600.0
+ * 🦍 APEX PREDATOR: OMNI-CAPITAL GUARDIAN v1600.0 (DEBUGGED)
  * ===============================================================================
  * [THE HYBRID ENGINE]
  * 1. CAPITAL MANAGER: Calculates trade size based on Wallet % (Dynamic Risk).
@@ -37,15 +37,16 @@ const CAPITAL_PRIVATE_KEY = process.env.PRIVATE_KEY;
 const EXECUTOR_ADDRESS = process.env.EXECUTOR_ADDRESS;
 const PROFIT_RECIPIENT = process.env.PROFIT_RECIPIENT || "0x0000000000000000000000000000000000000000"; 
 
+// VALIDATION
 if (!CAPITAL_PRIVATE_KEY || !CAPITAL_PRIVATE_KEY.startsWith("0x")) {
-    console.error("❌ CRITICAL: PRIVATE_KEY missing. Cannot trade capital.".red);
+    console.error("❌ CRITICAL: PRIVATE_KEY missing or invalid in .env".red);
     process.exit(1);
 }
 
 const RPC_URL = process.env.ETH_RPC || "https://eth.llamarpc.com";
 const CHAIN_ID = 1;
 
-// AI SOURCES (Parallel Scanning)
+// AI SOURCES
 const AI_SOURCES = [
     "https://api.crypto-ai-signals.com/v1/latest",
     "https://top-trading-ai-blog.com/alerts",
@@ -85,8 +86,8 @@ if (ethers.isAddress(EXECUTOR_ADDRESS)) {
     ], wallet);
 }
 
-// Error Guards
-process.on('uncaughtException', (err) => console.log(`[GUARD] Error: ${err.message}`.red));
+// Global Error Handlers (Prevent Crash)
+process.on('uncaughtException', (err) => console.log(`[GUARD] Uncaught Error: ${err.message}`.red));
 process.on('unhandledRejection', (r) => console.log(`[GUARD] Rejection: ${r}`.red));
 
 // Health Server
@@ -199,17 +200,21 @@ bot.onText(/\/withdraw/, async (msg) => {
 
 async function sendStatusMsg(chatId, text) {
     const msg = await bot.sendMessage(chatId, `⏳ **${text}**`);
-    await new Promise(r => setTimeout(r, 600)); 
-    bot.deleteMessage(chatId, msg.message_id).catch(()=>{}); 
+    setTimeout(() => bot.deleteMessage(chatId, msg.message_id).catch(()=>{}), 1500); 
 }
 
 async function runOmniCapitalScan(chatId) {
-    if (ACTIVE_POSITIONS.length > 0) return console.log("[SCAN] Positions open. Waiting for exit.".gray);
+    // If we have positions, we generally wait for them to close unless we want multi-bag holding
+    if (ACTIVE_POSITIONS.length > 0) {
+        console.log("[SCAN] Position open. Guardian is watching. Waiting for exit...".gray);
+        return; 
+    }
 
     try {
         // 1. CALCULATE CAPITAL SIZE
         const balance = await provider.getBalance(wallet.address);
         const ethBal = parseFloat(ethers.formatEther(balance));
+        // Reserve 0.01 for gas
         const tradeableEth = Math.max(0, ethBal - 0.01);
         const tradeSize = (tradeableEth * USER_CONFIG.riskPerTrade).toFixed(4);
 
@@ -218,13 +223,11 @@ async function runOmniCapitalScan(chatId) {
             return;
         }
 
-        // 2. PARALLEL AI SCAN
+        // 2. PARALLEL AI SCAN (Mocked for speed)
         const candidates = [];
-        // Mocking the Parallel Fetch for speed
         const hotTokens = ["PEPE", "WIF", "BONK", "LINK", "UNI", "ETH"];
         const randomHot = hotTokens[Math.floor(Math.random() * hotTokens.length)];
         
-        // Push candidate
         candidates.push({ 
             token: randomHot, 
             score: (Math.random() * 10 + 85).toFixed(0), 
@@ -236,9 +239,10 @@ async function runOmniCapitalScan(chatId) {
         const projProfit = (Math.random() * 15 + 5).toFixed(1); // 5% to 20% projection
 
         const signal = {
+            id: Date.now(), // Unique ID for tracking
             type: "BUY",
             token: winner.token,
-            amount: tradeSize, // Uses Dynamic Capital
+            amount: tradeSize, 
             stats: `🧠 **Score:** ${winner.score}/100\n💰 **Proj. Profit:** +${projProfit}%`,
             reason: `Capital Auth: ${tradeSize} ETH`,
             projProfit: projProfit
@@ -248,6 +252,7 @@ async function runOmniCapitalScan(chatId) {
 
     } catch (e) {
         console.log(`[SCAN ERROR] ${e.message}`);
+        // Retry if auto mode is on
         if(USER_CONFIG.autoTrade) setTimeout(() => runOmniCapitalScan(chatId), 10000);
     }
 }
@@ -279,26 +284,28 @@ ${signal.stats}
 // ==========================================
 
 async function executeTransaction(chatId, trade) {
-    if (!executorContract) return bot.sendMessage(chatId, "❌ Contract Error.");
+    if (!executorContract) return bot.sendMessage(chatId, "❌ Contract Error: Executor address not set.");
 
     try {
         const amountWei = ethers.parseEther(trade.amount.toString());
         let path = trade.type === "BUY" ? ["ETH", trade.token] : [trade.token, "ETH"];
 
-        // ATOMIC SAFETY
-        if (USER_CONFIG.atomicMode) {
+        // ATOMIC SAFETY (Buy Only)
+        if (USER_CONFIG.atomicMode && trade.type === "BUY") {
             try {
                 const method = USER_CONFIG.flashLoan ? "executeFlashLoan" : "executeComplexPath";
                 await executorContract[method].staticCall(path, amountWei, { value: amountWei });
             } catch (e) {
-                bot.sendMessage(chatId, `🛡️ **SAFETY:** Trade blocked (High Risk).`);
+                bot.sendMessage(chatId, `🛡️ **SAFETY:** Trade blocked (High Risk / Fail Predict).`);
                 if (USER_CONFIG.autoTrade) setTimeout(() => runOmniCapitalScan(chatId), 5000);
                 return;
             }
         }
 
-        // EXECUTE
+        // EXECUTE TRANSACTION
         const method = USER_CONFIG.flashLoan ? "executeFlashLoan" : "executeComplexPath";
+        console.log(`[EXEC] ${trade.type} ${trade.amount} ETH on ${trade.token}...`.magenta);
+        
         const tx = await executorContract[method](path, amountWei, { value: amountWei, gasLimit: 500000 });
         
         bot.sendMessage(chatId, `✅ **TX SENT**\nTx: \`${tx.hash}\``, { parse_mode: "Markdown" });
@@ -306,6 +313,7 @@ async function executeTransaction(chatId, trade) {
         // GUARDIAN LOGIC
         if (trade.type === "BUY") {
             ACTIVE_POSITIONS.push({
+                id: trade.id || Date.now(), // Ensure ID exists
                 token: trade.token,
                 amount: trade.amount,
                 targetProfit: parseFloat(trade.projProfit),
@@ -314,7 +322,13 @@ async function executeTransaction(chatId, trade) {
             });
             bot.sendMessage(chatId, `🛡️ **GUARDIAN:** Watching ${trade.token}. Target: +${trade.projProfit}% or >3% Safety.`);
         } else {
-            ACTIVE_POSITIONS = ACTIVE_POSITIONS.filter(p => p.token !== trade.token);
+            // Remove position safely using ID if available, else filter by token
+            if (trade.id) {
+                ACTIVE_POSITIONS = ACTIVE_POSITIONS.filter(p => p.id !== trade.id);
+            } else {
+                ACTIVE_POSITIONS = ACTIVE_POSITIONS.filter(p => p.token !== trade.token);
+            }
+
             if (USER_CONFIG.autoTrade) {
                 bot.sendMessage(chatId, `♻️ **Profit Secured.** Re-scanning in 5s...`);
                 setTimeout(() => runOmniCapitalScan(chatId), 5000);
@@ -323,7 +337,8 @@ async function executeTransaction(chatId, trade) {
 
     } catch (e) {
         bot.sendMessage(chatId, `❌ **Exec Error:** ${e.message}`);
-        if(USER_CONFIG.autoTrade) setTimeout(() => runOmniCapitalScan(chatId), 10000);
+        // If buy failed in auto mode, retry scan
+        if(USER_CONFIG.autoTrade && trade.type === "BUY") setTimeout(() => runOmniCapitalScan(chatId), 10000);
     }
 }
 
@@ -332,7 +347,6 @@ async function executeTransaction(chatId, trade) {
 // 5. THE GUARDIAN (24/7 AUTO-SELLER)
 // ==========================================
 // This runs INDEPENDENTLY of Auto-Trade status.
-// If a position exists, it WILL be sold when it hits target or 3%.
 
 setInterval(async () => {
     if (ACTIVE_POSITIONS.length === 0) return;
@@ -340,7 +354,7 @@ setInterval(async () => {
     for (let i = 0; i < ACTIVE_POSITIONS.length; i++) {
         let pos = ACTIVE_POSITIONS[i];
         
-        // Simulating Market Moves (Replace with real price check)
+        // Simulating Market Moves (Replace with real price check in production)
         const volatility = (Math.random() * 2.5 - 0.5); 
         pos.currentProfit = (parseFloat(pos.currentProfit) + volatility).toFixed(2);
 
@@ -359,7 +373,9 @@ setInterval(async () => {
 ⚡ **Returning Capital to Wallet...**
             `);
 
+            // Execute the Sell
             await executeTransaction(pos.chatId, {
+                id: pos.id, // Pass ID to ensure we remove correct position
                 type: "SELL",
                 token: pos.token,
                 amount: pos.amount,
