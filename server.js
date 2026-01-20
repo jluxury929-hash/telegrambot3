@@ -1,11 +1,12 @@
 /**
  * ===============================================================================
- * 🦍 APEX PREDATOR: DEEP STEALTH v2700.0 (INFURA FIX)
+ * 🦍 APEX PREDATOR: PERFECT SIMULATION v2500.0
  * ===============================================================================
- * [INFURA FIXES]
- * 1. DEEP SLEEP: Scans market every 2 mins (Saves API credits).
- * 2. SLOW WATCH: Checks prices every 30s (Prevents RPC 429 Errors).
- * 3. AUTO-COOLER: Detects "Too Many Requests" and sleeps for 60s automatically.
+ * [HYBRID ENGINE]
+ * 1. /simulate - Gives you 10.0 FAKE ETH. Trades REAL market data.
+ * 2. /real     - Switches to REAL WALLET (Danger Mode).
+ * 3. LOGIC     - Uses Uniswap 'getAmountsOut' for 100% accurate price simulation.
+ * 4. FALLBACK  - In Sim Mode, it forces a trade if market is slow (no waiting).
  *
  * [COMMANDS]
  * /simulate - Start Paper Trading (Safe)
@@ -28,13 +29,12 @@ require('colors');
 // ==========================================
 const TELEGRAM_TOKEN = "7903779688:AAGFMT3fWaYgc9vKBhxNQRIdB5AhmX0U9Nw"; 
 const PRIVATE_KEY = process.env.PRIVATE_KEY; 
-// Fallback to LlamaRPC if Infura fails (Public & Free)
 const RPC_URL = process.env.ETH_RPC || "https://eth.llamarpc.com"; 
 
 const ROUTER_ADDR = "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D"; 
 const WETH_ADDR = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
 
-// VERIFIED TOKENS
+// VERIFIED TOKENS (For Real & Sim Trading)
 const TOKEN_MAP = {
     "PEPE": "0x6982508145454Ce325dDbE47a25d4ec3d2311933",
     "LINK": "0x514910771AF9Ca656af840dff83E8264EcF986CA",
@@ -70,52 +70,53 @@ const CONFIG = {
     auto: false          
 };
 
-// TIMING SETTINGS (INFURA SAFE)
-const SCAN_INTERVAL = 120000; // 2 Minutes
-const WATCH_INTERVAL = 30000; // 30 Seconds
-const ERROR_COOLDOWN = 60000; // 1 Minute Sleep on Error
+// SIMULATION STATE
+let SIM_MODE = true;     // Default to Simulation
+let SIM_BALANCE = 10.0;  // Start with 10 Fake ETH
 
-let SIM_MODE = true;     
-let SIM_BALANCE = 10.0;  
+// TRADING STATE
 let ACTIVE_POSITION = null; 
-let IS_COOLING_DOWN = false;
 
 console.clear();
 console.log(`╔════════════════════════════════╗`.cyan);
-console.log(`║ 🦍 APEX INFURA-FIX v2700       ║`.cyan);
-console.log(`║ 💤 MODE: DEEP STEALTH          ║`.cyan);
+console.log(`║ 🦍 APEX HYBRID v2500 ONLINE    ║`.cyan);
+console.log(`║ 🧪 MODE: SIMULATION (SAFE)     ║`.cyan);
 console.log(`╚════════════════════════════════╝`.cyan);
 
 
 // ==========================================
-// 2. MARKET SCANNER (VERY SLOW)
+// 2. MARKET SCANNER
 // ==========================================
 async function runScan(chatId) {
-    if (ACTIVE_POSITION || IS_COOLING_DOWN) return;
+    // If holding a bag, don't scan.
+    if (ACTIVE_POSITION) {
+        bot.sendMessage(chatId, `🔒 **Holding:** ${ACTIVE_POSITION.token}. Watching price...`);
+        return;
+    }
 
     try {
+        // DETERMINE BALANCE (Real vs Fake)
         let ethBal, tradeEth;
         
         if (SIM_MODE) {
             ethBal = SIM_BALANCE;
-            tradeEth = ethBal * CONFIG.risk; 
+            tradeEth = ethBal * CONFIG.risk; // Sim can use 10% exactly
         } else {
             const bal = await provider.getBalance(wallet.address);
             ethBal = parseFloat(ethers.formatEther(bal));
-            tradeEth = (ethBal - 0.01) * CONFIG.risk; 
+            tradeEth = (ethBal - 0.01) * CONFIG.risk; // Real needs gas reserve
         }
 
         if (tradeEth < 0.005) {
-            bot.sendMessage(chatId, `⚠️ **Low Balance:** ${ethBal.toFixed(4)} ETH.`);
+            bot.sendMessage(chatId, `⚠️ **Low Balance (${SIM_MODE ? "Sim" : "Real"}):** ${ethBal.toFixed(4)} ETH.`);
             CONFIG.auto = false;
             return;
         }
 
         const modeIcon = SIM_MODE ? "🧪" : "🚨";
-        // Only log to console to save Telegram API limits too
-        console.log(`[SCAN] ${modeIcon} Scanning... Bal: ${ethBal.toFixed(4)}`.gray);
+        bot.sendMessage(chatId, `${modeIcon} **Scanning Market...**\n💰 Bal: ${ethBal.toFixed(4)} ETH\n🎲 Risk: ${tradeEth.toFixed(4)} ETH`);
 
-        // 1. FETCH TRENDS
+        // 1. FETCH TRENDS (Real Data)
         let bestToken = null;
         try {
             const res = await axios.get('https://api.coingecko.com/api/v3/search/trending');
@@ -128,23 +129,19 @@ async function runScan(chatId) {
                     break;
                 }
             }
-        } catch(e) { 
-            console.log(`[API LIMIT] CoinGecko 429. Sleeping...`.yellow);
-            triggerCooldown(chatId, "API Rate Limit");
-            return;
-        }
+        } catch(e) { console.log("API Error, using fallback"); }
 
-        // FALLBACK FOR SIMULATION
+        // FALLBACK: If Sim Mode and no trend, FORCE a trade so user sees it work
         if(!bestToken && SIM_MODE) {
             const keys = Object.keys(TOKEN_MAP);
             const randomKey = keys[Math.floor(Math.random() * keys.length)];
             bestToken = { symbol: randomKey, address: TOKEN_MAP[randomKey] };
-            bot.sendMessage(chatId, `⚡ **Sim Speed-Up:** Auto-selected ${bestToken.symbol}`);
+            bot.sendMessage(chatId, `⚡ **Sim Speed-Up:** Auto-selected ${bestToken.symbol} for testing.`);
         }
 
         if(!bestToken) {
-            console.log("No safe trends found. Waiting...".gray);
-            if(CONFIG.auto) setTimeout(() => runScan(chatId), SCAN_INTERVAL);
+            bot.sendMessage(chatId, "⏳ No safe trends found. Retrying...");
+            if(CONFIG.auto) setTimeout(() => runScan(chatId), 15000);
             return;
         }
 
@@ -152,13 +149,14 @@ async function runScan(chatId) {
         await executeBuy(chatId, bestToken, tradeEth);
 
     } catch (e) {
-        handleError(chatId, e, "SCAN");
+        console.log(`[SCAN ERROR] ${e.message}`.red);
+        if(CONFIG.auto) setTimeout(() => runScan(chatId), 15000);
     }
 }
 
 
 // ==========================================
-// 3. BUY ENGINE
+// 3. BUY ENGINE (Hybrid)
 // ==========================================
 async function executeBuy(chatId, token, amountEth) {
     try {
@@ -166,27 +164,31 @@ async function executeBuy(chatId, token, amountEth) {
         const path = [WETH_ADDR, token.address];
 
         if (SIM_MODE) {
-            bot.sendMessage(chatId, `🧪 **SIM BUY: ${token.symbol}**`);
+            // --- SIMULATION PATH ---
+            bot.sendMessage(chatId, `🧪 **SIMULATING BUY: ${token.symbol}**`);
             
+            // Get REAL rate from Uniswap (View Call = Free)
             const amounts = await router.getAmountsOut(amountInWei, path);
             const tokensReceived = amounts[1]; 
 
+            // Deduct Fake ETH
             SIM_BALANCE -= amountEth;
 
             ACTIVE_POSITION = {
                 token: token.symbol,
                 address: token.address,
-                tokensHeld: tokensReceived, 
+                tokensHeld: tokensReceived, // BigInt
                 entryEth: parseFloat(amountEth),
                 decimals: 18, 
                 chatId: chatId,
                 isSim: true
             };
 
-            bot.sendMessage(chatId, `✅ **SIM FILLED.**\nSpent: ${amountEth.toFixed(4)} Fake ETH`);
+            bot.sendMessage(chatId, `✅ **SIMULATED FILL.**\nSpent: ${amountEth.toFixed(4)} Fake ETH\nGot: ${ethers.formatUnits(tokensReceived, 18)} ${token.symbol}\nNew Fake Bal: ${SIM_BALANCE.toFixed(4)} ETH`);
 
         } else {
-            bot.sendMessage(chatId, `🚨 **REAL BUY: ${token.symbol}**`);
+            // --- REALITY PATH ---
+            bot.sendMessage(chatId, `🚨 **EXECUTING REAL BUY: ${token.symbol}**`);
             
             const deadline = Math.floor(Date.now() / 1000) + 300;
             const tx = await router.swapExactETHForTokens(
@@ -212,17 +214,18 @@ async function executeBuy(chatId, token, amountEth) {
                 chatId: chatId,
                 isSim: false
             };
-            bot.sendMessage(chatId, `✅ **REAL BUY CONFIRMED.**`);
+            bot.sendMessage(chatId, `✅ **REAL BUY CONFIRMED.** Holding ${token.symbol}`);
         }
 
     } catch (e) {
-        handleError(chatId, e, "BUY");
+        bot.sendMessage(chatId, `❌ **Buy Failed:** ${e.message}`);
+        if(CONFIG.auto) setTimeout(() => runScan(chatId), 10000);
     }
 }
 
 
 // ==========================================
-// 4. SELL ENGINE
+// 4. SELL ENGINE (Hybrid)
 // ==========================================
 async function executeSell(chatId, reason) {
     if (!ACTIVE_POSITION) return;
@@ -233,17 +236,23 @@ async function executeSell(chatId, reason) {
         bot.sendMessage(chatId, `${mode} **SELLING ${pos.token}**\nReason: ${reason}`);
 
         if (pos.isSim) {
+            // --- SIMULATION SELL ---
             const path = [pos.address, WETH_ADDR];
+            
+            // Get Real Market Value for tokens
             const amounts = await router.getAmountsOut(pos.tokensHeld, path);
             const ethRecieved = parseFloat(ethers.formatEther(amounts[1]));
 
             SIM_BALANCE += ethRecieved;
             const profit = ethRecieved - pos.entryEth;
+            const profitPct = ((profit / pos.entryEth) * 100).toFixed(2);
+
+            bot.sendMessage(chatId, `✅ **SIMULATED SELL.**\nRecieved: ${ethRecieved.toFixed(4)} Fake ETH\nPnL: ${profitPct}%\n💰 Wallet: ${SIM_BALANCE.toFixed(4)} ETH`);
             
-            bot.sendMessage(chatId, `✅ **SIM SOLD.**\nProfit: ${profit.toFixed(4)} ETH\n💰 Wallet: ${SIM_BALANCE.toFixed(4)} ETH`);
             ACTIVE_POSITION = null;
 
         } else {
+            // --- REAL SELL ---
             const tokenContract = new Contract(pos.address, ERC20_ABI, wallet);
             const deadline = Math.floor(Date.now() / 1000) + 300;
 
@@ -262,101 +271,74 @@ async function executeSell(chatId, reason) {
             );
             await tx.wait();
             
-            bot.sendMessage(chatId, `✅ **REAL SOLD.** Capital Returned.`);
+            bot.sendMessage(chatId, `✅ **REAL SELL CONFIRMED.** Capital Returned.`);
             ACTIVE_POSITION = null;
         }
 
+        // RESTART LOOP
         if (CONFIG.auto) {
-            console.log(`[LOOP] Waiting ${SCAN_INTERVAL/1000}s...`.gray);
-            setTimeout(() => runScan(chatId), SCAN_INTERVAL);
+            bot.sendMessage(chatId, `♻️ **Restarting Scan in 5s...**`);
+            setTimeout(() => runScan(chatId), 5000);
         }
 
     } catch (e) {
-        handleError(chatId, e, "SELL");
+        bot.sendMessage(chatId, `❌ **SELL FAILED:** ${e.message}`);
+        console.error(e);
     }
 }
 
 
 // ==========================================
-// 5. PRICE WATCHER (INFURA SAFE)
+// 5. PRICE WATCHER (Works for Sim & Real)
 // ==========================================
 async function watchPrice() {
-    if (!ACTIVE_POSITION || IS_COOLING_DOWN) return;
+    if (!ACTIVE_POSITION) return;
     const pos = ACTIVE_POSITION;
 
     try {
         const path = [pos.address, WETH_ADDR];
+        
+        // Use View Call to get accurate price without gas
         const amounts = await router.getAmountsOut(pos.tokensHeld, path);
         const currEth = parseFloat(ethers.formatEther(amounts[1]));
 
         const pnl = ((currEth - pos.entryEth) / pos.entryEth) * 100;
         
-        console.log(`[WATCH] ${pos.token}: ${pnl.toFixed(2)}%`.gray);
+        console.log(`[${pos.isSim ? "SIM" : "REAL"}] ${pos.token}: ${pnl.toFixed(2)}% ($${currEth.toFixed(4)})`.gray);
 
         if (pnl >= CONFIG.targetProfit) {
-            await executeSell(pos.chatId, `Profit Target (+${pnl.toFixed(2)}%)`);
+            await executeSell(pos.chatId, `Profit Target Hit (+${pnl.toFixed(2)}%)`);
         } else if (pnl <= CONFIG.stopLoss) {
-            await executeSell(pos.chatId, `Stop Loss (${pnl.toFixed(2)}%)`);
+            await executeSell(pos.chatId, `Stop Loss Hit (${pnl.toFixed(2)}%)`);
         }
 
     } catch (e) {
-        handleError(pos.chatId, e, "PRICE_CHECK");
+        console.log(`[PRICE ERROR] ${e.message}`);
     }
 }
 
-// SLOW WATCH: Check every 30 seconds to respect Infura Free Tier
-setInterval(watchPrice, WATCH_INTERVAL);
+setInterval(watchPrice, 5000); // Check every 5s
 
 
 // ==========================================
-// 6. ERROR HANDLING & COOLDOWN
-// ==========================================
-function handleError(chatId, error, context) {
-    const errMsg = error.message || "";
-    
-    // DETECT RATE LIMITS (429) OR INFURA ERRORS
-    if (errMsg.includes("429") || errMsg.includes("Too Many Requests") || errMsg.includes("rate limit")) {
-        triggerCooldown(chatId, "INFURA 429 (Rate Limit)");
-    } else {
-        console.log(`[${context} ERROR] ${errMsg}`.red);
-        if (CONFIG.auto) setTimeout(() => runScan(chatId), SCAN_INTERVAL);
-    }
-}
-
-function triggerCooldown(chatId, reason) {
-    if (IS_COOLING_DOWN) return;
-    IS_COOLING_DOWN = true;
-    
-    console.log(`[COOLING] ${reason} detected. Sleeping 60s...`.yellow);
-    if(chatId) bot.sendMessage(chatId, `💤 **Cooling Down:** API Limit hit. Sleeping 60s...`);
-
-    setTimeout(() => {
-        IS_COOLING_DOWN = false;
-        console.log(`[RESUME] System waking up.`.green);
-        if(CONFIG.auto && chatId) runScan(chatId);
-    }, ERROR_COOLDOWN);
-}
-
-
-// ==========================================
-// 7. COMMANDS
+// 6. COMMANDS
 // ==========================================
 bot.onText(/\/simulate/, (msg) => {
-    if(ACTIVE_POSITION && !ACTIVE_POSITION.isSim) return bot.sendMessage(msg.chat.id, "❌ Real trade active.");
+    if(ACTIVE_POSITION && !ACTIVE_POSITION.isSim) return bot.sendMessage(msg.chat.id, "❌ Cannot switch: Real trade active.");
     SIM_MODE = true;
-    SIM_BALANCE = 10.0; 
-    bot.sendMessage(msg.chat.id, "🧪 **SIMULATION MODE**\nBal: 10.0 Fake ETH");
+    SIM_BALANCE = 10.0; // Reset fake money
+    bot.sendMessage(msg.chat.id, "🧪 **SIMULATION MODE ACTIVE**\nBalance: 10.0 Fake ETH\nRisk: Zero");
 });
 
 bot.onText(/\/real/, (msg) => {
-    if(ACTIVE_POSITION) return bot.sendMessage(msg.chat.id, "❌ Close position first.");
+    if(ACTIVE_POSITION) return bot.sendMessage(msg.chat.id, "❌ Cannot switch: Close position first.");
     SIM_MODE = false;
-    bot.sendMessage(msg.chat.id, "🚨 **REAL MONEY MODE**\n⚠️ TRADES ARE LIVE ⚠️");
+    bot.sendMessage(msg.chat.id, "🚨 **REAL MONEY MODE ACTIVE**\n⚠️ TRADES WILL SPEND REAL ETH ⚠️");
 });
 
 bot.onText(/\/auto/, (msg) => {
     CONFIG.auto = true;
-    bot.sendMessage(msg.chat.id, `♾️ **LOOP STARTED** (Slow Mode)\nChecking every ${SCAN_INTERVAL/1000}s`);
+    bot.sendMessage(msg.chat.id, `♾️ **LOOP STARTED** (${SIM_MODE ? "Sim" : "Real"})`);
     runScan(msg.chat.id);
 });
 
@@ -367,15 +349,22 @@ bot.onText(/\/stop/, (msg) => {
 
 bot.onText(/\/status/, async (msg) => {
     const mode = SIM_MODE ? "🧪 SIMULATION" : "🚨 REAL MONEY";
-    let balText = SIM_MODE ? `${SIM_BALANCE.toFixed(4)} Fake ETH` : "Real ETH";
+    let balText = "";
+    
+    if (SIM_MODE) {
+        balText = `${SIM_BALANCE.toFixed(4)} Fake ETH`;
+    } else {
+        const bal = await provider.getBalance(wallet.address);
+        balText = `${ethers.formatEther(bal)} Real ETH`;
+    }
+
     let posText = ACTIVE_POSITION ? `🎒 Holding: ${ACTIVE_POSITION.token}` : "🤷‍♂️ Flat";
     
     bot.sendMessage(msg.chat.id, `
-📊 **STATUS**
+📊 **STATUS REPORT**
 Mode: ${mode}
 Wallet: ${balText}
 Status: ${posText}
-Cooling: ${IS_COOLING_DOWN}
     `);
 });
 
@@ -384,4 +373,5 @@ bot.onText(/\/sell/, (msg) => {
     executeSell(msg.chat.id, "Manual Command");
 });
 
+// HTTP Keep-Alive
 http.createServer((req, res) => res.end("Alive")).listen(8080);
