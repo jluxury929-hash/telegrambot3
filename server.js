@@ -1,7 +1,7 @@
 /**
  * ===============================================================================
  * 🦍 APEX PREDATOR: OMEGA TOTALITY v100000.0
- * 🎮 GAMIFIED INTENT ENGINE (RPG + MEV SHIELD)
+ * 🎮 GAMIFIED INTENT ENGINE (RPG + MEV SHIELD + PROFESSIONAL UI)
  * ===============================================================================
  */
 
@@ -51,23 +51,21 @@ let PLAYER = {
     nextLevelXp: 1000,
     class: "HUNTING CUB", 
     dailyQuests: [
-        { id: 'sim', task: "Scan 5 Tokens", count: 0, target: 5, done: false, xp: 150 },
-        { id: 'trade', task: "Execute 1 MEV-Shielded Trade", count: 0, target: 1, done: false, xp: 500 }
+        { id: 'sim', task: "Scan Market Depth", count: 0, target: 5, done: false, xp: 150 },
+        { id: 'trade', task: "Execute Shielded Protocol", count: 0, target: 1, done: false, xp: 500 }
     ],
-    inventory: ["MEV Shield v1 (Active)", "Gas Goggles (Active)"],
+    inventory: ["MEV Shield v1", "Gas Goggles"],
     streak: 1
 };
 
-// --- RPG LOGIC HELPERS ---
 const addXP = (amount, chatId) => {
     PLAYER.xp += amount;
-    // Check Level Up
     if (PLAYER.xp >= PLAYER.nextLevelXp) {
         PLAYER.level++;
         PLAYER.xp -= PLAYER.nextLevelXp;
         PLAYER.nextLevelXp = Math.floor(PLAYER.nextLevelXp * 1.5);
         PLAYER.class = getRankName(PLAYER.level);
-        bot.sendMessage(chatId, `🎉 **LEVEL UP!**\nYou are now Level ${PLAYER.level} (${PLAYER.class}).\n*Inventory upgraded.*`);
+        bot.sendMessage(chatId, `🎉 **PROMOTION:** Operator Level ${PLAYER.level} (${PLAYER.class}). Clearance updated.`);
     }
 };
 
@@ -79,15 +77,13 @@ const getRankName = (lvl) => {
 };
 
 const updateQuest = (type, chatId) => {
-    let questCompleted = false;
     PLAYER.dailyQuests.forEach(q => {
         if (q.id === type && !q.done) {
             q.count++;
             if (q.count >= q.target) {
                 q.done = true;
                 addXP(q.xp, chatId);
-                questCompleted = true;
-                bot.sendMessage(chatId, `✅ **QUEST COMPLETE:** ${q.task}\n+${q.xp} XP`);
+                bot.sendMessage(chatId, `✅ **OBJECTIVE COMPLETE:** ${q.task}\n+${q.xp} XP`);
             }
         }
     });
@@ -150,11 +146,8 @@ async function forceConfirm(chatId, type, tokenSym, txBuilder) {
 
             if (receipt && receipt.status === 1n) {
                 bot.sendMessage(chatId, `✅ **CONFIRMED:** ${type} ${tokenSym} Successful. Block: ${receipt.blockNumber}`);
-                
-                // 🎮 RPG UPDATE: Successful Trade
-                addXP(100, chatId); // Base XP for trading
-                updateQuest('trade', chatId); // Check trade quest
-                
+                addXP(100, chatId); 
+                updateQuest('trade', chatId); 
                 return receipt;
             }
         } catch (err) {
@@ -187,7 +180,6 @@ async function runProfitMonitor(chatId) {
         const currentPriceFloat = parseFloat(ethers.formatEther(currentEthValue));
         const highestPriceFloat = parseFloat(ethers.formatEther(highestPriceSeen));
 
-        // Update Peak
         if (currentPriceFloat > highestPriceFloat) {
             SYSTEM.activePosition.highestPriceSeen = currentEthValue;
         }
@@ -247,7 +239,6 @@ async function runScanner(chatId) {
     if (SYSTEM.activePosition) return; 
 
     try {
-        // 🎮 RPG UPDATE: Quest Progress
         updateQuest('sim', chatId);
 
         const bal = await provider.getBalance(wallet.address);
@@ -290,87 +281,64 @@ async function runScanner(chatId) {
 }
 
 // ==========================================
-// 🕹️ COMMANDS & UI
+// 🕹️ COMMANDS & UI (PROFESSIONAL ONE-SHOT START)
 // ==========================================
 
 bot.onText(/\/start/, (msg) => {
     bot.sendMessage(msg.chat.id, `
-🦍 **APEX TOTALITY: THE GREAT HUNT** \`————————————————————————————\`
-**Welcome to the Arena, Operator.**
+🛑 **SYSTEM INITIALIZED: APEX TOTALITY V100000** \`————————————————————————————————————————\`
+**OPERATOR:** ${msg.from.first_name.toUpperCase()}
+**CLEARANCE:** LEVEL ${PLAYER.level} (${PLAYER.class})
+**XP STATUS:** [${getXpBar()}] ${PLAYER.xp}/${PLAYER.nextLevelXp}
 
-🔹 **GAME COMMANDS:**
-\`/profile\` - Check Level, XP, Rank.
-\`/quests\` - View Daily Bounties.
-\`/inventory\` - Tactical Gear.
+🛡 **DEFENSE PROTOCOLS**
+• MEV Shield: \`ONLINE\` (Cluster Broadcast Active)
+• Gas Escalation: \`AUTO\`
+• Slippage Guard: \`0.5%\`
 
-🔹 **TRADING COMMANDS:**
-\`/auto\` - Toggle Infinite Rotation.
-\`/manual\` - Peak Signal Spotter Mode.
-\`/status\` - Wallet & Engine Status.
+⚙️ **COMMAND INTERFACE**
+\`/auto\`    - Toggle Autonomous Rotation Engine
+\`/manual\`  - Engage Peak Signal Spotter
+\`/status\`  - View Wallet & Active Positions
+\`/profile\` - Operator Rank & Objectives
 
-**Current Difficulty:** \`REAL-MONEY (MAINNET)\`
-*Gear up. The next block is yours.*
-\`————————————————————————————\``, { parse_mode: "Markdown" });
+*System ready. Awaiting directive.*
+\`————————————————————————————————————————\``, { parse_mode: "Markdown" });
 });
 
 bot.onText(/\/profile/, (msg) => {
     bot.sendMessage(msg.chat.id, `
-👤 **OPERATOR PROFILE: ${msg.from.first_name}**
+👤 **OPERATOR DOSSIER**
 \`————————————————————————————\`
-🎖 **Level:** \`${PLAYER.level}\`
-🏷 **Class:** \`${PLAYER.class}\`
-🔥 **Win Streak:** \`${PLAYER.streak} Days\`
+🎖 **Rank:** \`${PLAYER.level}\` (${PLAYER.class})
+🔥 **Active Streak:** \`${PLAYER.streak} Days\`
+📦 **Gear:** \`${PLAYER.inventory.join(", ")}\`
 
-**XP PROGRESS:** [${PLAYER.xp}/${PLAYER.nextLevelXp}]
-${getXpBar()}
-
-📦 **INVENTORY:** \`${PLAYER.inventory.join(", ")}\`
-\`————————————————————————————\``, { parse_mode: "Markdown" });
-});
-
-bot.onText(/\/quests/, (msg) => {
-    const questList = PLAYER.dailyQuests.map(q => `${q.done ? '✅' : '⬜'} ${q.task} (${q.count}/${q.target})`).join("\n");
-    bot.sendMessage(msg.chat.id, `
-📜 **DAILY BOUNTIES**
-\`————————————————————————————\`
-Complete these to earn bonus XP!
-
-${questList}
-
-🎁 **Reward:** \`XP Boost & Status\`
-\`————————————————————————————\``, { parse_mode: "Markdown" });
-});
-
-bot.onText(/\/inventory/, (msg) => {
-    bot.sendMessage(msg.chat.id, `
-🎒 **TACTICAL GEAR**
-\`————————————————————————————\`
-🛡 **MEV Shield:** \`ACTIVE\` (Cluster Broadcasting Enabled)
-🥽 **Gas Goggles:** \`ACTIVE\` (Auto-Bribe Escalation)
-🧪 **Sim-Vial:** \`Infinite\` (Scanning DEXs continuously)
+📜 **ACTIVE OBJECTIVES**
+${PLAYER.dailyQuests.map(q => `${q.done ? '✅' : '⬜'} ${q.task}`).join("\n")}
 \`————————————————————————————\``, { parse_mode: "Markdown" });
 });
 
 bot.onText(/\/status/, async (msg) => {
     const bal = await provider.getBalance(wallet.address);
-    let bag = SYSTEM.activePosition ? `${SYSTEM.activePosition.symbol}` : "None";
+    let bag = SYSTEM.activePosition ? `${SYSTEM.activePosition.symbol}` : "No Active Assets";
     bot.sendMessage(msg.chat.id, `
-📊 **ENGINE STATUS**
+📊 **LIVE TELEMETRY**
 \`————————————————————————————\`
-💰 **Exact Balance:** \`${ethers.formatUnits(bal, 18)}\` ETH
-🤖 **Mode:** ${SYSTEM.autoPilot ? '🟢 AUTO-PILOT' : '🔴 MANUAL'}
-💼 **Holding:** ${bag}
-🛡 **MEV Protection:** \`CLUSTER ACTIVE\`
+💰 **Wallet:** \`${ethers.formatUnits(bal, 18)}\` ETH
+🤖 **Engine:** ${SYSTEM.autoPilot ? '🟢 AUTONOMOUS' : '🔴 MANUAL STANDBY'}
+💼 **Position:** ${bag}
+🛡 **Security:** MEV-SHIELDED
 \`————————————————————————————\``, { parse_mode: "Markdown" });
 });
 
 bot.onText(/\/auto/, (msg) => {
     SYSTEM.autoPilot = !SYSTEM.autoPilot;
     if (SYSTEM.autoPilot) {
-        bot.sendMessage(msg.chat.id, "🚀 **AUTOPILOT ENGAGED.**\nLogic: Buy -> Track Peak -> Sell on Reversal -> Rotate.");
+        bot.sendMessage(msg.chat.id, "🚀 **AUTOPILOT ENGAGED.**\nScanning for entry candidates...");
         runScanner(msg.chat.id);
     } else {
-        bot.sendMessage(msg.chat.id, "🛑 **AUTOPILOT OFF.** Switching to Manual Signal Mode.");
+        bot.sendMessage(msg.chat.id, "🛑 **AUTOPILOT DISENGAGED.**\nSwitching to Manual Signal Monitoring.");
         runProfitMonitor(msg.chat.id); 
     }
 });
@@ -379,15 +347,15 @@ bot.onText(/\/sell (.+)/, async (msg, match) => {
     if (SYSTEM.activePosition) {
         await executeSell(msg.chat.id);
     } else {
-        bot.sendMessage(msg.chat.id, "⚠️ No active position to sell.");
+        bot.sendMessage(msg.chat.id, "⚠️ **ERROR:** No active assets to liquidate.");
     }
 });
 
 bot.onText(/\/manual/, (msg) => {
     SYSTEM.autoPilot = false;
-    bot.sendMessage(msg.chat.id, "👀 **MANUAL MODE:** I will watch the charts. Wait for my 'PEAK REVERSAL' signal.");
+    bot.sendMessage(msg.chat.id, "👀 **MANUAL OVERRIDE:** Monitoring price action for Peak Reversal Signals.");
     if (SYSTEM.activePosition) runProfitMonitor(msg.chat.id);
 });
 
-http.createServer((req, res) => res.end("V100000_RPG_ONLINE")).listen(8080);
-console.log("🦍 APEX TOTALITY v100000 ONLINE [RPG + TRADING MERGED].".magenta);
+http.createServer((req, res) => res.end("V100000_APEX_ONLINE")).listen(8080);
+console.log("🦍 APEX TOTALITY v100000 ONLINE [PROFESSIONAL UI].".magenta);
