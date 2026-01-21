@@ -1,6 +1,6 @@
 /**
  * ===============================================================================
- * 🦍 APEX PREDATOR: OMEGA TOTALITY v28000.0 (Ethers v6)
+ * 🦍 APEX PREDATOR: OMEGA TOTALITY v42000.0 (SHIELDED MERGE)
  * ===============================================================================
  */
 
@@ -11,10 +11,9 @@ const http = require('http');
 const TelegramBot = require('node-telegram-bot-api');
 require('colors');
 
+// 1. CONFIGURATION & FAILOVER POOL
 const TELEGRAM_TOKEN = "7903779688:AAGFMT3fWaYgc9vKBhxNQRIdB5AhmX0U9Nw";
 const PRIVATE_KEY = process.env.PRIVATE_KEY;
-
-// Failover RPC Pool for 100% Uptime
 const RPC_POOL = [
     "https://rpc.mevblocker.io", 
     "https://eth.llamarpc.com",
@@ -24,15 +23,7 @@ const RPC_POOL = [
 const ROUTER_ADDR = "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D";
 const WETH = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
 
-const TOKEN_MAP = {
-    "PEPE": "0x6982508145454Ce325dDbE47a25d4ec3d2311933",
-    "LINK": "0x514910771AF9Ca656af840dff83E8264EcF986CA",
-    "SHIB": "0x95aD61b0a150d79219dCF64E1E6Cc01f0B64C4cE"
-};
-
-// ==========================================
-// 1. ENGINE INITIALIZATION
-// ==========================================
+// 2. ENGINE INITIALIZATION
 let rpcIdx = 0;
 let provider = new JsonRpcProvider(RPC_POOL[rpcIdx]);
 let wallet = new Wallet(PRIVATE_KEY, provider);
@@ -44,14 +35,44 @@ let router = new Contract(ROUTER_ADDR, [
 ], wallet);
 
 const SYSTEM = {
+    autoPilot: false,
     isLocked: false,
     nonce: null,
-    risk: 0.15,
+    tradeAmount: "0.01",
+    mode: "FIXED", 
+    risk: 0.90,
+    minGasBuffer: ethers.parseEther("0.006"),
     heartbeat: Date.now()
 };
 
 // ==========================================
-// 2. THE ESCALATOR (CERTAINTY ENGINE)
+// 3. 🛡️ HONEYPOT SHIELD: PRE-TRADE SIMULATION
+// ==========================================
+
+async function simulateTrade(tokenAddress, tradeValue) {
+    try {
+        const pathBuy = [WETH, tokenAddress];
+        const pathSell = [tokenAddress, WETH];
+        const deadline = Math.floor(Date.now() / 1000) + 60;
+
+        // 1. SIMULATE BUY (staticCall asks the node "what would happen?")
+        await router.swapExactETHForTokens.staticCall(
+            0, pathBuy, wallet.address, deadline, 
+            { value: tradeValue }
+        );
+
+        // 2. SIMULATE SELL (The trap detection)
+        const amounts = await router.getAmountsOut(ethers.parseUnits("1", 18), pathSell);
+        if (amounts[1] === 0n) return false; // 100% tax honeypot
+
+        return true; 
+    } catch (e) {
+        return false; // Transaction would revert (Honeypot/Scam)
+    }
+}
+
+// ==========================================
+// 4. THE ESCALATOR (CERTAINTY ENGINE)
 // ==========================================
 
 async function forceConfirm(chatId, tokenSym, txParams) {
@@ -69,26 +90,26 @@ async function forceConfirm(chatId, tokenSym, txParams) {
         });
     };
 
+    bot.sendMessage(chatId, `🚀 **APPROVED.** Executing Strike for ${tokenSym}...`);
     let tx = await broadcast(currentBribe);
     bot.sendMessage(chatId, `📡 **STRIKE 1 [BROADCASTED]:** ${tokenSym}\nNonce: ${SYSTEM.nonce}\n[Etherscan](https://etherscan.io/tx/${tx.hash})`, { parse_mode: "Markdown" });
 
-    while (true) {
+    while (SYSTEM.autoPilot) {
         try {
-            // Wait for 1 block (12s)
             const receipt = await Promise.race([
                 tx.wait(1),
                 new Promise((_, reject) => setTimeout(() => reject(new Error("STALL")), 13000))
             ]);
 
             if (receipt && receipt.status === 1n) {
-                bot.sendMessage(chatId, `✅ **CONFIRMED.** Block: ${receipt.blockNumber}`);
+                bot.sendMessage(chatId, `✅ **STRIKE CONFIRMED.** Block: ${receipt.blockNumber}`);
                 return receipt;
             }
         } catch (err) {
             if (err.message === "STALL" && attempt < 4) {
                 attempt++;
-                currentBribe = (currentBribe * 200n) / 100n; // DOUBLE the bribe to jump the queue
-                bot.sendMessage(chatId, `⚠️ **TX STALLED.** Escalating Bribe to ${ethers.formatUnits(currentBribe, 'gwei')} Gwei...`);
+                currentBribe = (currentBribe * 200n) / 100n;
+                bot.sendMessage(chatId, `⚠️ **TX STALLED.** Escalating Bribe...`);
                 tx = await broadcast(currentBribe);
             } else { throw err; }
         }
@@ -96,57 +117,92 @@ async function forceConfirm(chatId, tokenSym, txParams) {
 }
 
 // ==========================================
-// 3. AUTOPILOT RECOVERY LOOP
+// 5. AUTOPILOT CORE RECURSION
 // ==========================================
 
-async function runAutopilot(chatId) {
-    if (SYSTEM.isLocked) return;
+async function runAutopilotCycle(chatId) {
+    if (!SYSTEM.autoPilot || SYSTEM.isLocked) return;
     SYSTEM.isLocked = true;
-    SYSTEM.heartbeat = Date.now();
 
     try {
-        // Handle potential RPC rate limits
+        // RPC Rotation & Nonce Check
         try {
             SYSTEM.nonce = await provider.getTransactionCount(wallet.address, "latest");
         } catch (e) {
-            if (e.message.includes("429")) {
-                rpcIdx = (rpcIdx + 1) % RPC_POOL.length;
-                provider = new JsonRpcProvider(RPC_POOL[rpcIdx]);
-                wallet = new Wallet(PRIVATE_KEY, provider);
-                router = router.connect(wallet);
-                console.log(`[RPC] Rotated to ${RPC_POOL[rpcIdx]}`.yellow);
-            }
-            throw e;
+            rpcIdx = (rpcIdx + 1) % RPC_POOL.length;
+            provider = new JsonRpcProvider(RPC_POOL[rpcIdx]);
+            wallet = new Wallet(PRIVATE_KEY, provider);
+            router = router.connect(wallet);
+            SYSTEM.nonce = await provider.getTransactionCount(wallet.address, "latest");
         }
 
         const bal = await provider.getBalance(wallet.address);
-        const ethVal = parseFloat(ethers.formatEther(bal));
-        if (ethVal < 0.015) { SYSTEM.isLocked = false; return; }
 
-        const res = await axios.get('https://api.coingecko.com/api/v3/search/trending');
-        const coin = res.data.coins[0].item.symbol.toUpperCase();
+        // Calculate Trade Size
+        let tradeValue = SYSTEM.mode === "FIXED" 
+            ? ethers.parseEther(SYSTEM.tradeAmount) 
+            : (bal - SYSTEM.minGasBuffer) * BigInt(Math.floor(SYSTEM.risk * 100)) / 100n;
 
-        if (TOKEN_MAP[coin]) {
-            const fee = await provider.getFeeData();
-            const txParams = {
-                path: [WETH, TOKEN_MAP[coin]],
-                deadline: Math.floor(Date.now() / 1000) + 300,
-                value: ethers.parseEther(((ethVal - 0.01) * SYSTEM.risk).toFixed(18)),
-                initialBribe: (fee.maxPriorityFeePerGas * 150n) / 100n
-            };
+        if (tradeValue <= 0n) return;
 
-            await forceConfirm(chatId, coin, txParams);
+        // Step 1: Scan for Target
+        const res = await axios.get('https://api.dexscreener.com/token-boosts/top/v1');
+        const target = res.data[0];
+
+        if (target && target.tokenAddress) {
+            bot.sendMessage(chatId, `🛡️ **SHIELD:** Simulating ${target.symbol}...`);
+
+            // Step 2: 🛡️ Honeypot Shield Check
+            const isSafe = await simulateTrade(target.tokenAddress, tradeValue);
+
+            if (!isSafe) {
+                bot.sendMessage(chatId, `⚠️ **SHIELD ALERT:** ${target.symbol} failed safety simulation. Skipping.`);
+            } else {
+                // Step 3: Trigger the Escalator
+                const fee = await provider.getFeeData();
+                const txParams = {
+                    path: [WETH, target.tokenAddress],
+                    deadline: Math.floor(Date.now() / 1000) + 60,
+                    value: tradeValue,
+                    initialBribe: (fee.maxPriorityFeePerGas * 150n) / 100n
+                };
+                await forceConfirm(chatId, target.symbol, txParams);
+            }
         }
-    } catch (e) { console.log(`[AUTO] Restarting...`.gray); }
-    finally { SYSTEM.isLocked = false; }
+    } catch (e) {
+        console.log(`[AUTO] Pulsing...`.gray);
+    } finally {
+        SYSTEM.isLocked = false;
+        if (SYSTEM.autoPilot) setTimeout(() => runAutopilotCycle(chatId), 15000);
+    }
 }
 
-// Auto-trigger every 30s
-setInterval(() => runAutopilot("7903779688"), 30000);
+// ==========================================
+// 6. MASTER COMMANDS
+// ==========================================
+
+bot.onText(/\/auto/, (msg) => {
+    const chatId = msg.chat.id;
+    SYSTEM.autoPilot = !SYSTEM.autoPilot;
+    bot.sendMessage(chatId, SYSTEM.autoPilot ? `🚀 **OMEGA TOTALITY: ON**\nMode: ${SYSTEM.mode}` : "🛑 **OMEGA TOTALITY: OFF**");
+    if (SYSTEM.autoPilot) runAutopilotCycle(chatId);
+});
+
+bot.onText(/\/setamount (.+)/, (msg, match) => {
+    SYSTEM.tradeAmount = match[1];
+    SYSTEM.mode = "FIXED";
+    bot.sendMessage(msg.chat.id, `⚙️ **AMOUNT SET:** ${match[1]} ETH`);
+});
+
+bot.onText(/\/compound/, (msg) => {
+    SYSTEM.mode = "COMPOUND";
+    bot.sendMessage(msg.chat.id, `📈 **RECURSIVE MODE ACTIVE.**`);
+});
 
 bot.onText(/\/status/, async (msg) => {
     const bal = await provider.getBalance(wallet.address);
-    bot.sendMessage(msg.chat.id, `🛡️ **OMEGA TOTALITY v28000 ONLINE**\nWallet: ${parseFloat(ethers.formatEther(bal)).toFixed(4)} ETH\nRPC: ${RPC_POOL[rpcIdx]}\nAutopilot: ACTIVE`);
+    bot.sendMessage(msg.chat.id, `🛡️ **SYSTEM v42000**\nBalance: ${parseFloat(ethers.formatEther(bal)).toFixed(4)} ETH\nEngine: ${SYSTEM.autoPilot ? '🟢' : '🔴'}`);
 });
 
-http.createServer((req, res) => res.end("V28000_RUNNING")).listen(8080);
+http.createServer((req, res) => res.end("V42000_RUNNING")).listen(8080);
+console.log("🦍 OMEGA TOTALITY v42000 ONLINE.".magenta);
