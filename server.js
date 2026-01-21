@@ -118,7 +118,7 @@ let SYSTEM = {
     nonce: null,
     tradeAmount: "0.01",   
     slippage: 50,          
-    minGasBuffer: ethers.parseEther("0.008"),
+    minGasBuffer: ethers.parseEther("0.00001"),
     trailingStopPercent: 5, 
     activePosition: null   
 };
