@@ -1,7 +1,7 @@
 /**
  * ===============================================================================
  * 🦍 APEX PREDATOR: OMEGA TOTALITY v100000.0
- * 🎮 GAMIFIED INTENT ENGINE (PERSISTENT STATE + SECURE WALLET CONNECT)
+ * 🎮 GAMIFIED INTENT ENGINE (PERSISTENT STATE + SECURE WALLET + PRO UI)
  * ===============================================================================
  */
 
@@ -9,17 +9,18 @@ require('dotenv').config();
 const { ethers, Wallet, Contract, JsonRpcProvider } = require('ethers');
 const axios = require('axios');
 const TelegramBot = require('node-telegram-bot-api');
+const http = require('http');
 require('colors');
 
 // --- CONFIGURATION ---
-// NOTE: You can put PRIVATE_KEY in .env for auto-load, OR use /connect command.
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN; 
 
 // 🛡️ MEV-SHIELDED CLUSTER POOL
+// Routes trades directly to block builders, bypassing public mempool.
 const RPC_POOL = [
-    "https://rpc.mevblocker.io",        // Primary
-    "https://rpc.flashbots.net/fast",   // Secondary
-    "https://eth.llamarpc.com"          // Fallback
+    "https://rpc.mevblocker.io",        // Primary: Anti-Sandwich + Rebates
+    "https://rpc.flashbots.net/fast",   // Secondary: Aggressive Private Inclusion
+    "https://eth.llamarpc.com"          // Fallback: Public High-Performance
 ];
 
 const ROUTER_ADDR = "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D";
@@ -50,9 +51,11 @@ if (process.env.PRIVATE_KEY) {
 }
 
 // ==========================================
-// 💾 PERSISTENT STATE
+// 💾 PERSISTENT STATE (RPG & STATS)
 // ==========================================
 
+// This object holds Long-Term data (XP, Level, Total Profit). 
+// It is NOT reset by /restart.
 let PLAYER = {
     level: 1,
     xp: 0,
@@ -63,7 +66,8 @@ let PLAYER = {
         { id: 'trade', task: "Execute Shielded Protocol", count: 0, target: 1, done: false, xp: 500 }
     ],
     inventory: ["MEV Shield v1", "Gas Goggles"],
-    totalProfitEth: 0.0
+    totalProfitEth: 0.0,
+    streak: 1
 };
 
 const addXP = (amount, chatId) => {
@@ -103,9 +107,11 @@ const getXpBar = () => {
 };
 
 // ==========================================
-// ⚙️ SYSTEM STATE
+// ⚙️ SYSTEM STATE (TRADING ENGINE)
 // ==========================================
 
+// This object holds Short-Term data. 
+// It IS reset by /restart.
 let SYSTEM = {
     autoPilot: false,
     isLocked: false,
@@ -118,7 +124,7 @@ let SYSTEM = {
 };
 
 // ==========================================
-// 🚀 SATURATION ENGINE
+// 🚀 SATURATION ENGINE (BUY/SELL)
 // ==========================================
 
 async function forceConfirm(chatId, type, tokenSym, txBuilder) {
@@ -134,6 +140,7 @@ async function forceConfirm(chatId, type, tokenSym, txBuilder) {
         const txReq = await txBuilder(bribe, maxFee, SYSTEM.nonce);
         const signedTx = await wallet.signTransaction(txReq);
 
+        // 📡 CLUSTER BROADCAST: Blast to all private nodes simultaneously
         RPC_POOL.forEach(url => {
             axios.post(url, { jsonrpc: "2.0", id: 1, method: "eth_sendRawTransaction", params: [signedTx] }).catch(() => {});
         });
@@ -147,6 +154,7 @@ async function forceConfirm(chatId, type, tokenSym, txBuilder) {
     let tx = await broadcast(initialBribe);
     let currentBribe = initialBribe;
 
+    // Recursive Confirmation Loop
     while (true) {
         try {
             const receipt = await Promise.race([
@@ -157,11 +165,12 @@ async function forceConfirm(chatId, type, tokenSym, txBuilder) {
             if (receipt && receipt.status === 1n) {
                 bot.sendMessage(chatId, `✅ **CONFIRMED:** ${type} ${tokenSym} Successful. Block: ${receipt.blockNumber}`);
                 
+                // RPG Updates: Grant XP for successful trades
                 if (type === "SELL") {
-                    addXP(500, chatId); 
+                    addXP(500, chatId); // Big XP for profit
                     updateQuest('trade', chatId); 
                 } else {
-                     addXP(100, chatId); 
+                     addXP(100, chatId); // Small XP for entry
                 }
 
                 return receipt;
@@ -169,7 +178,7 @@ async function forceConfirm(chatId, type, tokenSym, txBuilder) {
         } catch (err) {
             if (attempt < 5) {
                 attempt++;
-                currentBribe = (currentBribe * 160n) / 100n; 
+                currentBribe = (currentBribe * 160n) / 100n; // Gas Escalation
                 bot.sendMessage(chatId, `🔄 **STALL:** Bumping gas to ${ethers.formatUnits(currentBribe, 'gwei')} Gwei...`);
                 tx = await broadcast(currentBribe);
             } else {
@@ -196,6 +205,7 @@ async function runProfitMonitor(chatId) {
         const currentPriceFloat = parseFloat(ethers.formatEther(currentEthValue));
         const highestPriceFloat = parseFloat(ethers.formatEther(highestPriceSeen));
 
+        // Update Peak
         if (currentPriceFloat > highestPriceFloat) {
             SYSTEM.activePosition.highestPriceSeen = currentEthValue;
         }
@@ -203,7 +213,9 @@ async function runProfitMonitor(chatId) {
         const dropFromPeak = ((highestPriceFloat - currentPriceFloat) / highestPriceFloat) * 100;
         const totalProfit = ((currentPriceFloat - parseFloat(ethers.formatEther(entryPrice))) / parseFloat(ethers.formatEther(entryPrice))) * 100;
 
+        // Dynamic Exit Logic
         if (dropFromPeak >= SYSTEM.trailingStopPercent && totalProfit > 1) {
+            // Record Profit
             const profitEth = currentPriceFloat - parseFloat(ethers.formatEther(entryPrice));
             PLAYER.totalProfitEth += profitEth;
 
@@ -301,7 +313,7 @@ async function runScanner(chatId) {
 }
 
 // ==========================================
-// 🎮 CONNECT & STATUS COMMANDS
+// 🕹️ COMMANDS & UI (PROFESSIONAL ONE-SHOT START)
 // ==========================================
 
 // 🔑 SECURE CONNECT: Deletes message instantly for safety
@@ -373,6 +385,7 @@ bot.onText(/\/start/, (msg) => {
 });
 
 bot.onText(/\/restart/, (msg) => {
+    // Soft Reset: Resets logic loops but keeps Profit/XP
     SYSTEM.autoPilot = false;
     SYSTEM.isLocked = false;
     SYSTEM.activePosition = null; 
