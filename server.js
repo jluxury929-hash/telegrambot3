@@ -1,6 +1,6 @@
 /**
 * ===============================================================================
-* 🦍 APEX TOTALITY v21.0 | THE HYBRID (50% TRADING / 50% GAME)
+* 🦍 APEX TOTALITY v20.0 | THE RPG GAMIFICATION (LEVELS, XP, & QUESTS)
 * ===============================================================================
 */
 
@@ -8,115 +8,90 @@ require('dotenv').config();
 const TelegramBot = require('node-telegram-bot-api');
 const bot = new TelegramBot(process.env.TELEGRAM_TOKEN, { polling: true });
 
-// --- 🧠 1. THE HYBRID ENGINE STATE ---
-let SYSTEM = {
-// --- 💹 TRADING DATA ---
-wallet: null,
-riskMode: 'MED',
-horizon: 'SHORT',
-totalEthGained: 0.0,
-activePosition: null,
-
-// --- 🎮 GAME DATA ---
+// --- 🎮 1. GAME STATE ARCHITECTURE ---
+let PLAYER = {
 level: 1,
-xp: 0,
-class: "SCAVENGER", // SCAVENGER -> HUNTER -> WARRIOR -> APEX
-gear: {
-shield: "Basic MEV-Vest",
-optics: "Standard Gas-Lens",
-weapon: "Logic Blade v1"
-},
-dailyBounty: "Scout 3 Blue Chips"
+xp: 450,
+nextLevelXp: 1000,
+class: "HUNTING CUB 🐾", // Dynamic Title
+dailyQuests: [
+{ task: "Run 3 Simulations", done: false },
+{ task: "Protect 0.05 ETH MEV", done: false }
+],
+inventory: ["MEV Shield v1", "Gas Goggles"],
+streak: 5 // Consecutive days active
 };
 
-// --- 🎖️ 2. THE LEVELING SYSTEM ---
-const awardXp = (amount) => {
-SYSTEM.xp += amount;
-if (SYSTEM.xp >= 1000) {
-SYSTEM.level += 1;
-SYSTEM.xp = 0;
-return true; // Level Up trigger
-}
-return false;
+// --- 🎖️ 2. LEVELING LOGIC ---
+const getXpBar = () => {
+const progress = Math.round((PLAYER.xp / PLAYER.nextLevelXp) * 10);
+return "🟦".repeat(progress) + "⬛".repeat(10 - progress);
 };
 
 // ==========================================
-// 🚀 3. THE HYBRID COMMAND SUITE
+// 🚀 3. GAMIFIED COMMANDS
 // ==========================================
 
-bot.onText(/\/status/, async (msg) => {
-const p = (SYSTEM.xp / 1000) * 10;
-const bar = "🟦".repeat(p) + "⬛".repeat(10 - p);
-
-const dashboard = `
-📊 **SYSTEM & OPERATOR DASHBOARD**
-\`————————————————————————————\`
-👤 **Class:** \`${SYSTEM.class} [LVL ${SYSTEM.level}]\`
-💰 **PnL:** \`+${SYSTEM.totalEthGained.toFixed(4)} ETH\`
-🎮 **XP:** [${SYSTEM.xp}/1000]
-${bar}
-
-🛡️ **GEAR EQUIPPED:**
-├─ **Shield:** \`${SYSTEM.gear.shield}\`
-├─ **Optics:** \`${SYSTEM.gear.optics}\`
-└─ **Weapon:** \`${SYSTEM.gear.weapon}\`
-
-⚙️ **ENGINE SPECS:**
-├─ **Persona:** \`${SYSTEM.horizon}/${SYSTEM.riskMode}\`
-└─ **MEV Protection:** \`MAXIMUM\`
-\`————————————————————————————\``;
-
-bot.sendMessage(msg.chat.id, dashboard, { parse_mode: "Markdown" });
-});
-
-bot.onText(/\/battle/, (msg) => {
-// This triggers the Scan + Execution logic, but framed as a "Battle"
+bot.onText(/\/profile/, (msg) => {
 bot.sendMessage(msg.chat.id, `
-⚔️ **ENTERING THE ARENA...**
+🎮 **OPERATOR PROFILE: ${msg.from.first_name}**
 \`————————————————————————————\`
-**Objective:** Search for profitable liquidity gaps.
-**Armor Status:** \`100%\`
-**Target Sector:** \`${SYSTEM.riskMode === 'HIGH' ? 'Wildlands (Degen)' : 'The Citadel (Blue Chip)'}\`
+🏅 **Level:** \`${PLAYER.level}\`
+🏷️ **Class:** \`${PLAYER.class}\`
+🔥 **Win Streak:** \`${PLAYER.streak} Days\`
 
-*Deploying MEV-Shield and beginning scan...*
+**XP PROGRESS:** [${PLAYER.xp}/${PLAYER.nextLevelXp}]
+${getXpBar()}
+
+🎒 **INVENTORY:** \`${PLAYER.inventory.join(", ")}\`
 \`————————————————————————————\``, { parse_mode: "Markdown" });
-
-// Logic for runScanner() would go here
 });
 
-bot.onText(/\/loot/, (msg) => {
-// The Withdraw/Report command framed as "Loot"
+bot.onText(/\/quests/, (msg) => {
+const questList = PLAYER.dailyQuests.map(q => `${q.done ? '✅' : '⚔️'} ${q.task}`).join("\n");
 bot.sendMessage(msg.chat.id, `
-💰 **THE LOOT VAULT**
+📜 **DAILY BOUNTIES**
 \`————————————————————————————\`
-**Unclaimed Rewards:** \`+${SYSTEM.totalEthGained.toFixed(6)} ETH\`
-**Progress to Goal:** \`88%\`
+Complete these to earn bonus XP and reduce trading fees!
 
-1️⃣ \`/withdraw\` ➔ Cash out to your Exchange.
-2️⃣ \`/upgrade\` ➔ Use profits to level up your Gear.
+${questList}
+
+🎁 **Reward for all:** \`+250 XP & 0.1x Gas Discount\`
+\`————————————————————————————\``, { parse_mode: "Markdown" });
+});
+
+bot.onText(/\/inventory/, (msg) => {
+bot.sendMessage(msg.chat.id, `
+🎒 **TACTICAL GEAR**
+\`————————————————————————————\`
+🛡️ **MEV Shield:** \`ACTIVE\` (Reduces Sandwich risk by 99%)
+🥽 **Gas Goggles:** \`ACTIVE\` (Reveals hidden Gwei trends)
+🧪 **Sim-Vial:** \`3 Charges\` (Free high-fidelity simulations)
+
+*Unlock more gear by leveling up.*
 \`————————————————————————————\``, { parse_mode: "Markdown" });
 });
 
 // ==========================================
-// ✨ 4. THE 50/50 INTERFACE
+// ✨ 4. THE RPG START SCREEN
 // ==========================================
 
 bot.onText(/\/start/, (msg) => {
 bot.sendMessage(msg.chat.id, `
-🦍 **APEX TOTALITY v21.0 | HYBRID BUILD** 🦍
+🦍 **APEX TOTALITY: THE GREAT HUNT** 🦍
 \`————————————————————————————\`
-**Half Execution Layer. Half RPG Quest.**
+**Welcome to the Arena, Operator.**
 
-⚔️ \`/battle\` - Start scanning and execute trades.
-💰 \`/loot\` - View earnings and cash out.
-🎮 \`/status\` - View your Stats and Gear.
-🛡️ \`/shield\` - Activate Scam-Shield protocols.
+🎖️ \`/profile\` - Check your Level, XP, and Rank.
+📜 \`/quests\` - View daily missions for rewards.
+🎒 \`/inventory\` - Manage your tactical MEV gear.
+🧪 \`/simulate\` - Enter the Training Sandbox.
 
-**Current Quest:** \`${SYSTEM.dailyBounty}\`
-**Strategy:** \`${SYSTEM.horizon} / ${SYSTEM.riskMode}\`
+**Current Difficulty:** \`${SYSTEM.riskMode}\`
+**Mission Horizon:** \`${SYSTEM.horizon}\`
 
-*The hunt begins in the next block.*
+*Gear up. The next block is yours.*
 \`————————————————————————————\``, { parse_mode: "Markdown" });
 });
 
-console.log("🦍 APEX TOTALITY v21.0 | 50/50 BUILD ONLINE".magenta);
+console.log("🦍 APEX TOTALITY v20.0 | RPG BUILD ONLINE".magenta);
