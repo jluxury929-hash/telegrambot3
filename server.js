@@ -1,11 +1,10 @@
 /**
  * ===============================================================================
- * 🦁 APEX PREDATOR: OMEGA TOTALITY v3000.0 [STABLE RELEASE]
+ * 🦁 APEX PREDATOR: OMEGA TOTALITY v3000.0 [STABLE FINAL]
  * ===============================================================================
- * FIXES:
- * 1. AUTO-PILOT: Full loop logic (Scan -> Buy -> Monitor -> Sell -> Repeat).
- * 2. COMMANDS: /buy and /sell now context-aware (no address entry needed).
- * 3. BUNDLE FIX: Priority fees optimized for "Block Winning."
+ * 1. FIXED: Ethers v6 read-only transaction object overrides.
+ * 2. FIXED: Concurrent Nonce management for Sell Bundles.
+ * 3. FIXED: Autonomous State Machine logic for zero-latency rotation.
  * ===============================================================================
  */
 
@@ -26,147 +25,157 @@ const WETH = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
 const provider = new JsonRpcProvider(RPC_URL || "https://rpc.ankr.com/eth");
 let wallet, router, flashbotsProvider, bot;
 
-// --- SYSTEM STATE ---
 let SYSTEM = {
     autoPilot: false,
-    state: "HUNTING",      // HUNTING, MONITORING, EXECUTING
-    pendingTarget: null,   // Target address from /scan
-    activePosition: null,  // Data of the token currently held
-    tradeAmount: "0.02",   // Default ETH size
+    state: "HUNTING",      
+    pendingTarget: null,   
+    activePosition: null,  
+    tradeAmount: "0.02",   
     scannedTokens: new Set(),
     config: { trailingStop: 10, stopLoss: 15, minLiquidity: 30000 }
 };
 
 // ==========================================
-// 1. ATOMIC EXECUTION CORE (WIN THE BLOCK)
+// 1. ATOMIC EXECUTION CORE
 // ==========================================
 
-async function executeStrike(type, tokenAddress, amountInEth) {
+async function executeStrike(type, tokenAddress, amountInEth, targetChatId) {
     if (!wallet || !flashbotsProvider) return false;
+    const originalState = SYSTEM.state;
     SYSTEM.state = "EXECUTING";
 
-    const blockNumber = await provider.getBlockNumber();
-    let txRequest;
-
     try {
+        const blockNumber = await provider.getBlockNumber();
+        const nonce = await provider.getTransactionCount(wallet.address, "latest");
+        const feeData = await provider.getFeeData();
+        
+        // Predatory Bribing: High priority for Flashbots builders
+        const priorityFee = (feeData.maxPriorityFeePerGas || 1500000000n) * 3n;
+        const maxFee = (feeData.maxFeePerGas || 30000000000n) + priorityFee;
+
+        let bundleTxs = [];
+
         if (type === "BUY") {
-            const amountIn = ethers.parseUnits(amountInEth.toString(), 18);
+            const amountIn = ethers.parseEther(amountInEth.toString());
             const amounts = await router.getAmountsOut(amountIn, [WETH, tokenAddress]);
             const minOut = (amounts[1] * 90n) / 100n; // 10% Slippage
             
-            txRequest = await router.swapExactETHForTokens.populateTransaction(
+            const buyTx = await router.swapExactETHForTokens.populateTransaction(
                 minOut, [WETH, tokenAddress], wallet.address, Math.floor(Date.now()/1000)+120,
-                { value: amountIn }
+                { value: amountIn, gasLimit: 350000n }
             );
-        } else {
-            const tokenContract = new Contract(tokenAddress, ["function approve(address, uint) returns (bool)", "function balanceOf(address) view returns (uint)"], wallet);
-            const bal = await tokenContract.balanceOf(wallet.address);
-            if (bal === 0n) return false;
 
-            // Bundle Approval + Sell for absolute speed
-            const approveTx = await tokenContract.approve.populateTransaction(ROUTER_ADDR, bal);
+            // Correctly format for signing in v6
+            const signedBuy = await wallet.signTransaction({
+                ...buyTx,
+                type: 2, chainId: 1, nonce: nonce,
+                maxPriorityFeePerGas: priorityFee, maxFeePerGas: maxFee
+            });
+            bundleTxs.push({ signedTransaction: signedBuy });
+
+        } else {
+            const tokenContract = new Contract(tokenAddress, [
+                "function approve(address, uint) returns (bool)", 
+                "function balanceOf(address) view returns (uint)"
+            ], wallet);
+            const bal = await tokenContract.balanceOf(wallet.address);
+            if (bal === 0n) throw new Error("Zero Balance");
+
+            // Bundle 1: Approve
+            const approveTx = await tokenContract.approve.populateTransaction(ROUTER_ADDR, bal, { gasLimit: 60000n });
+            const signedApprove = await wallet.signTransaction({
+                ...approveTx, type: 2, chainId: 1, nonce: nonce,
+                maxPriorityFeePerGas: priorityFee, maxFeePerGas: maxFee
+            });
+
+            // Bundle 2: Sell
             const sellTx = await router.swapExactTokensForETH.populateTransaction(
-                bal, 0n, [tokenAddress, WETH], wallet.address, Math.floor(Date.now()/1000)+120
+                bal, 0n, [tokenAddress, WETH], wallet.address, Math.floor(Date.now()/1000)+120, 
+                { gasLimit: 350000n }
             );
-            
-            // For Sell, we send a bundle of 2 transactions
-            return await sendFlashbotsBundle([approveTx, sellTx], blockNumber);
+            const signedSell = await wallet.signTransaction({
+                ...sellTx, type: 2, chainId: 1, nonce: nonce + 1n,
+                maxPriorityFeePerGas: priorityFee, maxFeePerGas: maxFee
+            });
+
+            bundleTxs.push({ signedTransaction: signedApprove }, { signedTransaction: signedSell });
         }
 
-        return await sendFlashbotsBundle([txRequest], blockNumber, type, tokenAddress, amountInEth);
+        // SIMULATE
+        const sim = await flashbotsProvider.simulate(bundleTxs, blockNumber + 1);
+        if ("error" in sim || sim.firstRevert) {
+            if(targetChatId) bot.sendMessage(targetChatId, `🛡 **ATOMIC SHIELD:** Trade unsafe. Aborted. $0 spent.`);
+            throw new Error("Sim Revert");
+        }
+
+        // EXECUTE
+        const res = await flashbotsProvider.sendBundle(bundleTxs, blockNumber + 1);
+        const wait = await res.wait();
+
+        if (wait === FlashbotsBundleResolution.BundleIncluded) {
+            if(targetChatId) bot.sendMessage(targetChatId, `🏆 **OBLITERATED:** ${type} mined! Block ${blockNumber + 1}.`);
+            if (type === "BUY") {
+                SYSTEM.activePosition = { address: tokenAddress, entry: amountInEth, highWaterMark: amountInEth };
+                SYSTEM.state = "MONITORING";
+            } else {
+                SYSTEM.activePosition = null;
+                SYSTEM.state = "HUNTING";
+            }
+            return true;
+        } else {
+            SYSTEM.state = originalState;
+            return false;
+        }
 
     } catch (e) {
-        console.log(`[STRIKE ERROR] ${e.message}`.red);
-        SYSTEM.state = (type === "BUY") ? "HUNTING" : "MONITORING";
+        console.log(`[EXEC ERROR] ${e.message}`.red);
+        SYSTEM.state = originalState;
         return false;
     }
 }
 
-async function sendFlashbotsBundle(txs, blockNumber, type, addr, amt) {
-    const nonce = await provider.getTransactionCount(wallet.address);
-    const feeData = await provider.getFeeData();
-    
-    // Predatory Bribing: 2.5x the current priority fee
-    const priorityFee = (feeData.maxPriorityFeePerGas || ethers.parseUnits("1", "gwei")) * 25n / 10n;
-    const maxFee = (feeData.maxFeePerGas || ethers.parseUnits("20", "gwei")) + priorityFee;
-
-    const bundle = [];
-    for (let i = 0; i < txs.length; i++) {
-        const signed = await wallet.signTransaction({
-            ...txs[i],
-            type: 2, chainId: 1, nonce: nonce + i,
-            maxPriorityFeePerGas: priorityFee, maxFeePerGas: maxFee, gasLimit: 400000
-        });
-        bundle.push({ signedTransaction: signed });
-    }
-
-    const sim = await flashbotsProvider.simulate(bundle, blockNumber + 1);
-    if ("error" in sim || sim.firstRevert) return false;
-
-    const res = await flashbotsProvider.sendBundle(bundle, blockNumber + 1);
-    const wait = await res.wait();
-
-    if (wait === FlashbotsBundleResolution.BundleIncluded) {
-        if (type === "BUY") {
-            SYSTEM.activePosition = { address: addr, entry: amt, highWaterMark: amt };
-            SYSTEM.state = "MONITORING";
-        } else {
-            SYSTEM.activePosition = null;
-            SYSTEM.state = "HUNTING";
-        }
-        return true;
-    }
-    return false;
-}
-
 // ==========================================
-// 2. AUTO-PILOT STATE MACHINE
+// 2. LOOPS
 // ==========================================
 
-async function autoPilotLoop() {
-    if (!SYSTEM.autoPilot) return setTimeout(autoPilotLoop, 2000);
-
-    // PHASE 1: SCANNING/HUNTING
-    if (SYSTEM.state === "HUNTING" && !SYSTEM.activePosition) {
-        try {
-            const res = await axios.get('https://api.dexscreener.com/token-boosts/top/v1');
-            const target = res.data.find(t => !SYSTEM.scannedTokens.has(t.tokenAddress));
-            
-            if (target) {
-                const details = await axios.get(`https://api.dexscreener.com/latest/dex/tokens/${target.tokenAddress}`);
-                const pair = details.data.pairs?.[0];
-                
-                if (pair && pair.liquidity.usd > SYSTEM.config.minLiquidity) {
-                    SYSTEM.scannedTokens.add(target.tokenAddress);
-                    bot.sendMessage(CHAT_ID, `🎯 **AUTO-BUY:** ${pair.baseToken.symbol} - Liquidity: $${pair.liquidity.usd}`);
-                    await executeStrike("BUY", target.tokenAddress, SYSTEM.tradeAmount);
+async function coreLoop() {
+    if (SYSTEM.autoPilot) {
+        if (SYSTEM.state === "HUNTING" && !SYSTEM.activePosition) {
+            try {
+                const res = await axios.get('https://api.dexscreener.com/token-boosts/top/v1');
+                const target = res.data.find(t => !SYSTEM.scannedTokens.has(t.tokenAddress));
+                if (target) {
+                    const details = await axios.get(`https://api.dexscreener.com/latest/dex/tokens/${target.tokenAddress}`);
+                    const pair = details.data.pairs?.[0];
+                    if (pair && pair.liquidity.usd > SYSTEM.config.minLiquidity) {
+                        SYSTEM.scannedTokens.add(target.tokenAddress);
+                        await executeStrike("BUY", target.tokenAddress, SYSTEM.tradeAmount, CHAT_ID);
+                    }
                 }
-            }
-        } catch (e) {}
+            } catch (e) {}
+        }
+        if (SYSTEM.state === "MONITORING" && SYSTEM.activePosition) {
+            try {
+                const pos = SYSTEM.activePosition;
+                // GetPrice: Use a small amount to check output
+                const checkAmt = ethers.parseEther("1");
+                const amounts = await router.getAmountsOut(checkAmt, [pos.address, WETH]);
+                const currentEth = parseFloat(ethers.formatEther(amounts[1]));
+                
+                if (currentEth > pos.highWaterMark) pos.highWaterMark = currentEth;
+                const drop = ((pos.highWaterMark - currentEth) / pos.highWaterMark) * 100;
+
+                if (drop >= SYSTEM.config.trailingStop) {
+                    await executeStrike("SELL", pos.address, "0", CHAT_ID);
+                }
+            } catch (e) {}
+        }
     }
-
-    // PHASE 2: MONITORING/PROFIT TAKING
-    if (SYSTEM.state === "MONITORING" && SYSTEM.activePosition) {
-        try {
-            const pos = SYSTEM.activePosition;
-            const amounts = await router.getAmountsOut(ethers.parseEther("1"), [pos.address, WETH]);
-            const currentEth = parseFloat(ethers.formatEther(amounts[1]));
-            
-            if (currentEth > pos.highWaterMark) pos.highWaterMark = currentEth;
-            const drop = ((pos.highWaterMark - currentEth) / pos.highWaterMark) * 100;
-
-            if (drop >= SYSTEM.config.trailingStop) {
-                bot.sendMessage(CHAT_ID, `📉 **AUTO-SELL:** Trailing stop hit at ${drop.toFixed(2)}% drop.`);
-                await executeStrike("SELL", pos.address, "0");
-            }
-        } catch (e) {}
-    }
-
-    setTimeout(autoPilotLoop, 4000);
+    setTimeout(coreLoop, 3000);
 }
 
 // ==========================================
-// 3. INTEGRATED COMMAND HANDLERS
+// 3. INIT & COMMANDS
 // ==========================================
 
 async function startBot() {
@@ -181,22 +190,21 @@ async function startBot() {
     bot = new TelegramBot(TELEGRAM_TOKEN, { polling: true });
 
     bot.onText(/\/scan/, async (msg) => {
-        bot.sendMessage(msg.chat.id, "🦅 **SCANNING...**");
-        const res = await axios.get('https://api.dexscreener.com/token-boosts/top/v1');
-        SYSTEM.pendingTarget = res.data[0].tokenAddress;
-        bot.sendMessage(msg.chat.id, `🎯 **LOCKED:** \`${SYSTEM.pendingTarget}\` \nType **/buy** to execute.`);
+        try {
+            const res = await axios.get('https://api.dexscreener.com/token-boosts/top/v1');
+            SYSTEM.pendingTarget = res.data[0].tokenAddress;
+            bot.sendMessage(msg.chat.id, `🎯 **LOCKED:** \`${SYSTEM.pendingTarget}\` \nType **/buy** to engage.`);
+        } catch (e) { bot.sendMessage(msg.chat.id, "❌ API error."); }
     });
 
     bot.onText(/\/buy/, async (msg) => {
-        if (!SYSTEM.pendingTarget) return bot.sendMessage(msg.chat.id, "❌ Run /scan first.");
-        const success = await executeStrike("BUY", SYSTEM.pendingTarget, SYSTEM.tradeAmount);
-        if (success) bot.sendMessage(msg.chat.id, "✅ Buy Mined via Flashbots.");
+        if (!SYSTEM.pendingTarget) return bot.sendMessage(msg.chat.id, "❌ Run /scan.");
+        await executeStrike("BUY", SYSTEM.pendingTarget, SYSTEM.tradeAmount, msg.chat.id);
     });
 
     bot.onText(/\/sell/, async (msg) => {
-        if (!SYSTEM.activePosition) return bot.sendMessage(msg.chat.id, "❌ No position to sell.");
-        const success = await executeStrike("SELL", SYSTEM.activePosition.address, "0");
-        if (success) bot.sendMessage(msg.chat.id, "✅ Sold Position.");
+        if (!SYSTEM.activePosition) return bot.sendMessage(msg.chat.id, "❌ Empty position.");
+        await executeStrike("SELL", SYSTEM.activePosition.address, "0", msg.chat.id);
     });
 
     bot.onText(/\/auto/, (msg) => {
@@ -204,8 +212,9 @@ async function startBot() {
         bot.sendMessage(msg.chat.id, `🤖 **AUTO-PILOT:** ${SYSTEM.autoPilot ? 'ENABLED' : 'DISABLED'}`);
     });
 
-    autoPilotLoop();
+    console.log("🦁 APEX v3000 STABLE ONLINE".magenta);
+    coreLoop();
 }
 
 startBot();
-http.createServer((req, res) => res.end("APEX")).listen(8080);
+http.createServer((req, res) => res.end("APEX_RUNNING")).listen(8080);
