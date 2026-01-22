@@ -1,12 +1,12 @@
 /**
  * ===============================================================================
- * 🦁 APEX PREDATOR v300.0 (OMNI-NUCLEAR SINGULARITY)
+ * 🦁 APEX PREDATOR v400.0 (OMNI-FUSION SINGULARITY)
  * ===============================================================================
- * FUSION ARCHITECTURE:
- * 1. AI SENTRY: Scans Web/APIs for sentiment & signals (Source 1).
- * 2. NUCLEAR EXECUTION: Flashbots Bundling + Saturation Broadcast (Source 2).
- * 3. MULTI-CHAIN: Supports ETH (Nuclear) and Base/Arb/Poly (Aggressive).
- * 4. TELEGRAM COMMAND: Full remote control via TG.
+ * THE ULTIMATE MERGE:
+ * 1. AI SENTRY: Scans Web Sentiment (Script 1) + Mempool Hype (Script 3).
+ * 2. NUCLEAR EXECUTION: Flashbots + Saturation Broadcast (Script 2).
+ * 3. MULTI-CHAIN: Supports ETH, BASE, ARB, POLY (Script 1).
+ * 4. SMART ROTATION: Auto-skips duplicates (Script 2).
  * ===============================================================================
  */
 
@@ -14,6 +14,7 @@ require('dotenv').config();
 const { ethers } = require('ethers');
 const { FlashbotsBundleProvider } = require("@flashbots/ethers-provider-bundle");
 const TelegramBot = require('node-telegram-bot-api');
+const WebSocket = require('ws');
 const axios = require('axios');
 const Sentiment = require('sentiment');
 const fs = require('fs');
@@ -21,37 +22,52 @@ const http = require('http');
 require('colors');
 
 // ==========================================
-// 0. CONFIGURATION & INFRASTRUCTURE
+// 0. CONFIGURATION
 // ==========================================
 
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
 const PRIVATE_KEY = process.env.PRIVATE_KEY;
-// Standard Uniswap V2 Router (Works on ETH, Base, Arb usually has forks with diff addresses, verify per chain)
+const WSS_NODE_URL = process.env.WSS_NODE_URL; // Required for Mempool Sniffing
+
+// Uniswap V2 Router (ETH/Base/Arb often use same address, verify per chain)
 const ROUTER_ADDR = "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D"; 
 const WETH = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
 
-// Network Definitions
+// Network Definitions (from Script 1)
 const NETWORKS = {
     ETHEREUM: { 
         chainId: 1, 
         rpc: process.env.ETH_RPC || "https://rpc.mevblocker.io", 
-        flashbots: true 
+        flashbots: true,
+        priority: "50.0"
     },
     BASE: { 
         chainId: 8453, 
         rpc: process.env.BASE_RPC || "https://mainnet.base.org", 
-        flashbots: false 
+        flashbots: false,
+        priority: "1.5"
     },
-    // Add others as needed
+    ARBITRUM: { 
+        chainId: 42161, 
+        rpc: process.env.ARB_RPC || "https://arb1.arbitrum.io/rpc", 
+        flashbots: false,
+        priority: "1.0" 
+    },
+    POLYGON: { 
+        chainId: 137, 
+        rpc: process.env.POLY_RPC || "https://polygon-rpc.com", 
+        flashbots: false,
+        priority: "200.0" 
+    }
 };
 
-// Web AI Targets
+// Web AI Targets (from Script 1)
 const AI_SITES = [
     "https://api.dexscreener.com/token-boosts/top/v1",
     "https://api.crypto-ai-signals.com/v1/latest"
 ];
 
-// Saturation Pool for ETH Broadcasting
+// Saturation Pool for ETH Broadcasting (from Script 2)
 const ETH_RPC_POOL = [
     "https://rpc.mevblocker.io",
     "https://rpc.flashbots.net/fast",
@@ -59,30 +75,43 @@ const ETH_RPC_POOL = [
     "https://rpc.ankr.com/eth"
 ];
 
+// Mempool Thresholds (from Script 3)
+const HYPE_THRESHOLD = 5;
+const HYPE_WINDOW_MS = 2000;
+
 // ==========================================
 // 1. CLOUD BOOT GUARD
 // ==========================================
 const runHealthServer = () => {
     http.createServer((req, res) => {
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ status: "APEX_ALIVE", mode: "OMNI_NUCLEAR" }));
+        res.end(JSON.stringify({ 
+            status: "APEX_ALIVE", 
+            mode: "OMNI_FUSION",
+            mempool_active: !!WSS_NODE_URL
+        }));
     }).listen(process.env.PORT || 8080);
     console.log(`[SYSTEM] Health Server Active`.green);
 };
 
 // ==========================================
-// 2. AI & TRUST ENGINE (The Brain)
+// 2. AI & MEMPOOL ENGINE (The Brain)
 // ==========================================
 class AIEngine {
-    constructor() {
+    constructor(governor) {
+        this.governor = governor;
         this.trustFile = "trust_scores.json";
         this.sentiment = new Sentiment();
         this.trustScores = this.loadTrust();
+        
+        // Mempool State
+        this.mempoolCounts = {}; 
+        this.processedTxHashes = new Set();
     }
 
     loadTrust() {
         try { return JSON.parse(fs.readFileSync(this.trustFile, 'utf8')); } 
-        catch (e) { return { WEB_AI: 0.85 }; }
+        catch (e) { return { WEB_AI: 0.85, MEMPOOL: 0.95 }; }
     }
 
     updateTrust(source, success) {
@@ -92,9 +121,10 @@ class AIEngine {
         try { fs.writeFileSync(this.trustFile, JSON.stringify(this.trustScores)); } catch(e){}
     }
 
-    async scan() {
+    // --- SOURCE 1: WEB SCANNER (Script 1) ---
+    async scanWeb() {
         const signals = [];
-        console.log(`[AI] Scanning Intelligence Sources...`.cyan);
+        // console.log(`[AI] Scanning Web Intelligence...`.cyan);
         
         for (const url of AI_SITES) {
             try {
@@ -105,14 +135,93 @@ class AIEngine {
                         if (t.tokenAddress) signals.push({ 
                             address: t.tokenAddress, 
                             symbol: t.symbol || "UNKNOWN",
-                            network: "ETHEREUM", // Default assumption, logic can be expanded
-                            score: 0.9 
+                            network: "ETHEREUM", // Default, could parse chainId from response
+                            source: "WEB_AI"
                         });
                     });
                 }
             } catch (e) {}
         }
         return signals;
+    }
+
+    // --- SOURCE 2: MEMPOOL LISTENER (Script 3) ---
+    startMempoolListener() {
+        if (!WSS_NODE_URL) {
+            console.log(`[WARN] No WSS_NODE_URL! Mempool Sniffer Disabled.`.red);
+            return;
+        }
+
+        console.log(`[MEMPOOL] 📡 Connecting to Hype Stream...`.cyan);
+        const ws = new WebSocket(WSS_NODE_URL); 
+
+        ws.on('open', () => {
+            console.log(`[MEMPOOL] ✅ Connected. Scanning...`.green);
+            ws.send(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_subscribe", params: ["newPendingTransactions"] }));
+        });
+
+        ws.on('message', async (data) => {
+            if (!this.governor.system.autoPilot || this.governor.system.activePosition) return;
+
+            try {
+                const response = JSON.parse(data);
+                if (response.method === "eth_subscription") {
+                    const txHash = response.params.result;
+                    if (this.processedTxHashes.has(txHash)) return;
+                    this.processedTxHashes.add(txHash);
+                    if (this.processedTxHashes.size > 5000) this.processedTxHashes.clear();
+
+                    // Fetch TX (Note: Rate limits apply on public nodes)
+                    const provider = this.governor.providers.ETHEREUM;
+                    const tx = await provider.getTransaction(txHash).catch(() => null);
+                    if (tx && tx.to && tx.data) this.processPendingTx(tx);
+                }
+            } catch (e) {}
+        });
+
+        ws.on('error', (e) => {
+            console.log(`[MEMPOOL] Reconnecting...`.red);
+            setTimeout(() => this.startMempoolListener(), 5000);
+        });
+    }
+
+    processPendingTx(tx) {
+        // Basic Router Detection (Uniswap Universal / V2)
+        const routers = ["0x3fC91A3afd70395Cd496C647d5a6CC9D4B2b7FAD", ROUTER_ADDR];
+        if (!routers.includes(tx.to)) return;
+
+        // Naive Calldata Decode
+        const data = tx.data.toLowerCase();
+        const addressRegex = /0x[a-f0-9]{40}/g;
+        const matches = data.match(addressRegex);
+
+        if (matches) {
+            for (const addr of matches) {
+                // Ignore WETH and Routers
+                if (addr !== WETH.toLowerCase() && !routers.map(r=>r.toLowerCase()).includes(addr)) {
+                    this.updateHypeCounter(addr);
+                    break;
+                }
+            }
+        }
+    }
+
+    updateHypeCounter(tokenAddress) {
+        const now = Date.now();
+        if (!this.mempoolCounts[tokenAddress]) this.mempoolCounts[tokenAddress] = [];
+        this.mempoolCounts[tokenAddress].push(now);
+        this.mempoolCounts[tokenAddress] = this.mempoolCounts[tokenAddress].filter(t => now - t < HYPE_WINDOW_MS);
+
+        if (this.mempoolCounts[tokenAddress].length >= HYPE_THRESHOLD) {
+            // TRIGGER ATTACK
+            this.governor.processSignal({
+                address: tokenAddress,
+                symbol: "PRE-COG",
+                network: "ETHEREUM",
+                source: "MEMPOOL"
+            });
+            this.mempoolCounts[tokenAddress] = []; // Reset
+        }
     }
 }
 
@@ -121,7 +230,7 @@ class AIEngine {
 // ==========================================
 class ApexOmniGovernor {
     constructor() {
-        this.ai = new AIEngine();
+        this.ai = new AIEngine(this);
         this.providers = {};
         this.wallets = {};
         this.flashbots = null;
@@ -133,17 +242,18 @@ class ApexOmniGovernor {
         // System State
         this.system = {
             autoPilot: false,
-            activePosition: null, // { address, amount, entryPrice, network }
-            lastTradedToken: null,
+            activePosition: null, 
+            lastTradedToken: null, // Smart Rotation Memory
             riskProfile: 'DEGEN',
             tradeAmount: "0.00002"
         };
 
-        // Risk Configs
+        // Risk Configs (Merged)
         this.risk = {
             LOW: { slippage: 50, gasMult: 120n },
             MEDIUM: { slippage: 200, gasMult: 150n },
-            DEGEN: { slippage: 2000, gasMult: 300n } // Nuclear
+            DEGEN: { slippage: 2000, gasMult: 300n }, // Nuclear
+            FINALITY: { slippage: 3000, gasMult: 500n } // Pre-Cog Max
         };
 
         this.initNetworks();
@@ -156,8 +266,10 @@ class ApexOmniGovernor {
                 const net = ethers.Network.from(cfg.chainId);
                 const prov = new ethers.JsonRpcProvider(cfg.rpc, net, { staticNetwork: net });
                 this.providers[key] = prov;
-                this.wallets[key] = new ethers.Wallet(PRIVATE_KEY, prov);
-                console.log(`[INIT] ${key} Connected: ${this.wallets[key].address}`.green);
+                if (PRIVATE_KEY) {
+                    this.wallets[key] = new ethers.Wallet(PRIVATE_KEY, prov);
+                    console.log(`[INIT] ${key} Connected: ${this.wallets[key].address}`.green);
+                }
             } catch (e) { console.log(`[INIT] ${key} Failed`.red); }
         }
 
@@ -170,9 +282,12 @@ class ApexOmniGovernor {
             );
             console.log(`[INIT] ☢️ NUCLEAR ENGINE: Flashbots Active`.magenta);
         } catch (e) { console.log(`[INIT] Flashbots Failed`.red); }
+
+        // Start Mempool Listener
+        this.ai.startMempoolListener();
     }
 
-    // --- NUCLEAR EXECUTION LOGIC ---
+    // --- NUCLEAR EXECUTION LOGIC (Script 2) ---
     async executeNuclearTransaction(networkName, txBuilder, description) {
         const provider = this.providers[networkName];
         const wallet = this.wallets[networkName];
@@ -180,11 +295,15 @@ class ApexOmniGovernor {
 
         if (!wallet) return null;
 
+        // Dynamic Gas Calculation
         const feeData = await provider.getFeeData();
         const baseFee = feeData.maxFeePerGas || feeData.gasPrice;
-        const priorityFee = feeData.maxPriorityFeePerGas || ethers.parseUnits("3", "gwei");
+        
+        // Use Network-Specific Priority or Default
+        let prioVal = NETWORKS[networkName].priority || "3";
+        const priorityFee = ethers.parseUnits(prioVal, "gwei");
 
-        // Aggressive Gas Calculation
+        // Aggressive Gas Multiplier
         const aggPriority = (priorityFee * config.gasMult) / 100n;
         const aggMaxFee = baseFee + aggPriority;
 
@@ -198,11 +317,12 @@ class ApexOmniGovernor {
         if (networkName === 'ETHEREUM' && this.flashbots) {
             const block = await provider.getBlockNumber();
             const bundle = [{ signedTransaction: signedTx }];
-            // Target Next 2 Blocks
-            this.flashbots.sendBundle(bundle, block + 1).catch(()=>{});
-            this.flashbots.sendBundle(bundle, block + 2).catch(()=>{});
+            // Target Next 3 Blocks (Script 2 Logic)
+            for(let i=1; i<=3; i++) {
+                this.flashbots.sendBundle(bundle, block + i).catch(()=>{});
+            }
             
-            // Saturation Broadcast
+            // Saturation Broadcast (Script 2)
             ETH_RPC_POOL.forEach(url => {
                 axios.post(url, { jsonrpc: "2.0", id: 1, method: "eth_sendRawTransaction", params: [signedTx] }).catch(()=>{});
             });
@@ -214,7 +334,9 @@ class ApexOmniGovernor {
             const receipt = await tx.wait(1);
             if (receipt.status === 1) {
                 console.log(`[SUCCESS] ${description} Confirmed: ${receipt.hash}`.green);
-                this.bot.sendMessage(process.env.CHAT_ID, `✅ **CONFIRMED:** ${description}\n🔗 [View](${receipt.hash})`, {parse_mode: "Markdown"});
+                if (process.env.CHAT_ID) {
+                    this.bot.sendMessage(process.env.CHAT_ID, `✅ **CONFIRMED:** ${description}\n🔗 [View](${receipt.hash})`, {parse_mode: "Markdown"});
+                }
                 return receipt;
             }
         } catch (e) {
@@ -223,14 +345,27 @@ class ApexOmniGovernor {
         return null;
     }
 
-    // --- TRADING LOGIC ---
-    async executeBuy(signal) {
-        // Smart Rotation Check
+    // --- MAIN LOGIC HUB ---
+    async processSignal(signal) {
+        // 1. Check Autopilot
+        if (!this.system.autoPilot && signal.source !== "MANUAL") return;
+
+        // 2. Smart Rotation (Script 2)
         if (this.system.lastTradedToken === signal.address) {
             console.log(`[SKIP] Already traded ${signal.symbol}. Rotating...`.gray);
             return;
         }
 
+        // 3. Busy Check
+        if (this.system.activePosition) return;
+
+        console.log(`[TARGET] Acquired: ${signal.symbol} via ${signal.source}`.bgGreen.black);
+        if (process.env.CHAT_ID) this.bot.sendMessage(process.env.CHAT_ID, `🎯 **TARGET ACQUIRED:** ${signal.symbol}\n🤖 **Source:** ${signal.source}`);
+
+        await this.executeBuy(signal);
+    }
+
+    async executeBuy(signal) {
         const networkKey = signal.network;
         const wallet = this.wallets[networkKey];
         if (!wallet) return;
@@ -253,7 +388,7 @@ class ApexOmniGovernor {
             console.log(`[WARN] Liquidity check failed. Using 0 minOut (YOLO).`.red);
         }
 
-        // Build & Execute
+        // Execute Nuclear Tx
         const receipt = await this.executeNuclearTransaction(networkKey, async (prio, max, n) => {
             return await router.swapExactETHForTokens.populateTransaction(
                 minOut, [WETH, signal.address], wallet.address, Math.floor(Date.now()/1000)+120,
@@ -267,7 +402,8 @@ class ApexOmniGovernor {
                 symbol: signal.symbol,
                 network: networkKey,
                 amount: minOut,
-                entryPrice: tradeVal
+                entryPrice: tradeVal,
+                startPrice: 0 // Will fetch
             };
             this.system.lastTradedToken = signal.address;
             this.monitorPosition();
@@ -282,11 +418,9 @@ class ApexOmniGovernor {
         const token = new ethers.Contract(pos.address, ["function approve(address, uint) returns (bool)"], wallet);
         const router = new ethers.Contract(ROUTER_ADDR, ["function swapExactTokensForETH(uint amountIn, uint amountOutMin, address[] path, address to, uint dead) external returns (uint[])"], wallet);
 
-        // Approve
         console.log(`[SELL] Approving...`.yellow);
         await (await token.approve(ROUTER_ADDR, pos.amount)).wait();
 
-        // Swap
         const receipt = await this.executeNuclearTransaction(pos.network, async (prio, max, n) => {
             return await router.swapExactTokensForETH.populateTransaction(
                 pos.amount, 0n, [pos.address, WETH], wallet.address, Math.floor(Date.now()/1000)+120,
@@ -296,59 +430,58 @@ class ApexOmniGovernor {
 
         if (receipt) {
             this.system.activePosition = null;
-            this.ai.updateTrust("WEB_AI", true); // Reinforce learning
-            if (this.system.autoPilot) this.runLoop(); // Resume hunting
+            if (this.system.autoPilot) this.runWebLoop(); // Resume hunting
         }
     }
 
     async monitorPosition() {
         if (!this.system.activePosition) return;
-        // Simplified monitoring: Auto-sell after 30 seconds for demo/scalp logic
-        // In production, add real price checking here
-        console.log(`[MONITOR] Holding ${this.system.activePosition.symbol}... Selling in 30s`.cyan);
-        setTimeout(() => this.executeSell(), 30000);
+        // Simplified Logic: Sell after 1 minute or rely on manual override for now to save API calls
+        // Real-time price monitoring requires constant RPC calls which is heavy for a consolidated script
+        console.log(`[MONITOR] Holding ${this.system.activePosition.symbol}... Waiting 60s or Manual Sell`.cyan);
+        setTimeout(() => this.executeSell(), 60000);
     }
 
-    // --- MAIN LOOP ---
-    async runLoop() {
+    // --- WEB SCAN LOOP (Script 1 Logic) ---
+    async runWebLoop() {
         if (!this.system.autoPilot) return;
         
-        const signals = await this.ai.scan();
+        const signals = await this.ai.scanWeb();
         if (signals.length > 0) {
             // Find best signal not currently ignored
             const target = signals.find(s => s.address !== this.system.lastTradedToken);
             if (target) {
-                this.bot.sendMessage(process.env.CHAT_ID, `🎯 **TARGET ACQUIRED:** ${target.symbol}\n🤖 **Source:** AI Scan`, {parse_mode: "Markdown"});
-                await this.executeBuy(target);
+                this.processSignal({ ...target, source: "WEB_AI" });
             }
         }
 
         if (!this.system.activePosition && this.system.autoPilot) {
-            setTimeout(() => this.runLoop(), 3000); // 3s Loop
+            setTimeout(() => this.runWebLoop(), 3000);
         }
     }
 
     // --- TELEGRAM LISTENERS ---
     setupTelegramListeners() {
         this.bot.onText(/\/start/, (msg) => {
-            process.env.CHAT_ID = msg.chat.id; // Auto-capture chat ID
-            this.bot.sendMessage(msg.chat.id, `🦁 **APEX OMNI-NUCLEAR ONLINE**\n/auto - Toggle Autopilot\n/status - View Telemetry`);
+            process.env.CHAT_ID = msg.chat.id;
+            this.bot.sendMessage(msg.chat.id, `🦁 **APEX OMNI-FUSION ONLINE**\n/auto - Toggle Autopilot\n/status - View Telemetry`);
         });
 
         this.bot.onText(/\/auto/, (msg) => {
             this.system.autoPilot = !this.system.autoPilot;
             this.bot.sendMessage(msg.chat.id, `🤖 **AUTOPILOT:** ${this.system.autoPilot ? "ON" : "OFF"}`);
-            if (this.system.autoPilot) this.runLoop();
+            if (this.system.autoPilot) this.runWebLoop();
         });
+
+        this.bot.onText(/\/sell/, (msg) => this.executeSell());
 
         this.bot.onText(/\/status/, async (msg) => {
             const ethBal = await this.providers.ETHEREUM.getBalance(this.wallets.ETHEREUM.address);
             this.bot.sendMessage(msg.chat.id, `
 📡 **TELEMETRY**
-💰 **ETH Balance:** ${ethers.formatEther(ethBal)}
+💰 **ETH:** ${ethers.formatEther(ethBal)}
 🚀 **Mode:** ${this.system.autoPilot ? "HUNTING" : "IDLE"}
-🎒 **Position:** ${this.system.activePosition ? this.system.activePosition.symbol : "None"}
-☢️ **Risk:** ${this.system.riskProfile}
+🎒 **Pos:** ${this.system.activePosition ? this.system.activePosition.symbol : "None"}
             `);
         });
     }
@@ -359,4 +492,4 @@ class ApexOmniGovernor {
 // ==========================================
 runHealthServer();
 const predator = new ApexOmniGovernor();
-console.log(`🦁 APEX PREDATOR v300.0 INITIALIZED`.magenta);
+console.log(`🦁 APEX PREDATOR v400.0 INITIALIZED`.magenta);
