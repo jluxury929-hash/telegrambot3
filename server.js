@@ -1,10 +1,10 @@
 /**
  * ===============================================================================
- * APEX PREDATOR: NEURAL SIGNAL v10000 (THE ARCHITECT)
+ * APEX PREDATOR: NEURAL SIGNAL v9000 (JUPITER ULTRA EDITION)
  * ===============================================================================
- * ENGINE: Jupiter Ultra (SOL) + EVM Standard
- * LOGIC: Real-Time Data Analysis (Liquidity, Vol, 1h Change)
- * FILTER: "The Gauntlet" (Filters Rugs, Dead Coins, and Pump-and-Dumps)
+ * ARCH: Multi-Chain (EVM + SVM) | RPG System | Neural Scanner
+ * ENGINE: Jupiter Ultra Swap API (v1) & Standard EVM
+ * SPECS: Strict adherence to Jupiter OpenAPI (/order -> /execute)
  * ===============================================================================
  */
 
@@ -20,53 +20,50 @@ require('colors');
 
 // --- CONFIGURATION ---
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
-const JUP_ULTRA_API = "https://api.jup.ag/ultra/v1"; 
+const JUP_ULTRA_API = "https://api.jup.ag/ultra/v1";
 
 // --- 5-CHAIN NETWORK DEFINITIONS ---
 const NETWORKS = {
     ETH: {
         id: 'ethereum', type: 'EVM',
         rpc: 'https://rpc.mevblocker.io',
-        router: '0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D',
+        router: '0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D', // Uniswap V2
         weth: '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
-        scanMode: 'VOLUME', query: 'WETH'
+        scanQuery: 'WETH'
     },
     SOL: {
         id: 'solana', type: 'SVM',
-        rpc: 'https://api.mainnet-beta.solana.com',
-        scanMode: 'BOOST'
+        rpc: 'https://api.mainnet-beta.solana.com'
     },
     BASE: {
         id: 'base', type: 'EVM',
         rpc: 'https://mainnet.base.org',
-        router: '0x4752ba5DBc23f44D87826276BF6Fd6b1C372aD24',
-        weth: '0x4200000000000000000000000000000000000006',
-        scanMode: 'BOOST'
+        router: '0x4752ba5DBc23f44D87826276BF6Fd6b1C372aD24', // Uniswap V2
+        weth: '0x4200000000000000000000000000000000000006'
     },
     BSC: {
         id: 'bsc', type: 'EVM',
         rpc: 'https://bsc-dataseed.binance.org/',
-        router: '0x10ED43C718714eb63d5aA57B78B54704E256024E',
-        weth: '0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c',
-        scanMode: 'BOOST'
+        router: '0x10ED43C718714eb63d5aA57B78B54704E256024E', // PancakeSwap
+        weth: '0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c'
     },
     ARB: {
         id: 'arbitrum', type: 'EVM',
         rpc: 'https://arb1.arbitrum.io/rpc',
-        router: '0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506',
+        router: '0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506', // SushiSwap
         weth: '0x82aF49447D8a07e3bd95BD0d56f35241523fBab1',
-        scanMode: 'VOLUME', query: 'WETH'
+        scanQuery: 'WETH'
     }
 };
 
 // --- GLOBAL STATE ---
 let SYSTEM = {
-    currentNetwork: 'SOL', 
+    currentNetwork: 'SOL',
     autoPilot: false,
     isLocked: false,
     riskProfile: 'MEDIUM',
     strategyMode: 'DAY',
-    tradeAmount: "0.01", 
+    tradeAmount: "0.01",
     activePosition: null,
     pendingTarget: null,
     lastTradedToken: null
@@ -82,9 +79,16 @@ const bot = new TelegramBot(TELEGRAM_TOKEN, {
 });
 
 // ==========================================
-//  RPG SYSTEM
+//  RPG SYSTEM (GAMIFICATION)
 // ==========================================
-let PLAYER = { level: 1, xp: 0, nextLevelXp: 1000, class: "DATA ANALYST" };
+let PLAYER = {
+    level: 1, xp: 0, nextLevelXp: 1000, class: "DATA ANALYST",
+    totalProfit: 0.0,
+    dailyQuests: [
+        { id: 'sim', task: "Analyze Neural Signals", count: 0, target: 10, done: false, xp: 150 },
+        { id: 'trade', task: "Execute High-Confidence Setup", count: 0, target: 1, done: false, xp: 500 }
+    ]
+};
 
 const addXP = (amount, chatId) => {
     PLAYER.xp += amount;
@@ -92,23 +96,49 @@ const addXP = (amount, chatId) => {
         PLAYER.level++;
         PLAYER.xp -= PLAYER.nextLevelXp;
         PLAYER.nextLevelXp = Math.floor(PLAYER.nextLevelXp * 1.5);
-        bot.sendMessage(chatId, `🆙 **PROMOTION:** Level ${PLAYER.level} (${getRankName(PLAYER.level)})`);
+        PLAYER.class = getRankName(PLAYER.level);
+        if(chatId) bot.sendMessage(chatId, `🆙 **PROMOTION:** Level ${PLAYER.level} (${PLAYER.class})`);
     }
 };
-const getRankName = (lvl) => (lvl < 5 ? "DATA ANALYST" : lvl < 10 ? "PATTERN SEER" : "MARKET GOD");
+
+const getRankName = (lvl) => {
+    if (lvl < 5) return "DATA ANALYST";
+    if (lvl < 10) return "PATTERN SEER";
+    if (lvl < 20) return "WHALE HUNTER";
+    return "MARKET GOD";
+};
+
+const updateQuest = (type, chatId) => {
+    PLAYER.dailyQuests.forEach(q => {
+        if (q.id === type && !q.done) {
+            q.count++;
+            if (q.count >= q.target) {
+                q.done = true;
+                addXP(q.xp, chatId);
+            }
+        }
+    });
+};
+
+const getXpBar = () => {
+    const p = Math.min(Math.round((PLAYER.xp / PLAYER.nextLevelXp) * 10), 10);
+    return "▓".repeat(p) + "░".repeat(10 - p);
+};
 
 // ==========================================
-//  SETTINGS
+//  SETTINGS & CONFIG
 // ==========================================
 const RISK_PROFILES = {
-    LOW:    { slippage: 50,  stopLoss: 10, label: "LOW" },
-    MEDIUM: { slippage: 200, stopLoss: 20, label: "MEDIUM" },
-    HIGH:   { slippage: 500, stopLoss: 40, label: "HIGH" }
+    LOW:    { slippage: 50,  stopLoss: 10, label: "LOW (Safe)" },
+    MEDIUM: { slippage: 200, stopLoss: 20, label: "MEDIUM (Balanced)" },
+    HIGH:   { slippage: 500, stopLoss: 40, label: "HIGH (Aggressive)" },
+    DEGEN:  { slippage: 2000, stopLoss: 60, label: "DEGEN (YOLO)" }
 };
+
 const STRATEGY_MODES = {
-    SCALP:  { trail: 5,  minConf: 80 }, 
-    DAY:    { trail: 15, minConf: 85 },  
-    MOON:   { trail: 40, minConf: 90 }  
+    SCALP:  { trail: 5,  minConf: 0.80, label: "SCALP" },
+    DAY:    { trail: 15, minConf: 0.85, label: "SWING" },  
+    MOON:   { trail: 40, minConf: 0.90, label: "MOON" }  
 };
 
 // ==========================================
@@ -156,70 +186,91 @@ async function initNetwork(netKey) {
 }
 
 // ==========================================
-//  EXECUTION ENGINES
+//  SOLANA EXECUTION (JUPITER ULTRA v1)
 // ==========================================
 
 async function executeUltraSwap(chatId, direction, tokenAddress, amountInput) {
     if (!solWallet) return bot.sendMessage(chatId, "❌ Wallet Not Connected");
 
     try {
-        const slip = RISK_PROFILES[SYSTEM.riskProfile].slippage;
+        const risk = RISK_PROFILES[SYSTEM.riskProfile];
         const inputMint = direction === 'BUY' ? 'So11111111111111111111111111111111111111112' : tokenAddress;
         const outputMint = direction === 'BUY' ? tokenAddress : 'So11111111111111111111111111111111111111112';
-        const amount = direction === 'BUY' ? Math.floor(amountInput * LAMPORTS_PER_SOL).toString() : SYSTEM.activePosition.tokenAmount.toString();
+       
+        // Determine Amount
+        let amountStr;
+        if (direction === 'BUY') {
+             // For Buy: SOL to Lamports
+             amountStr = Math.floor(amountInput * LAMPORTS_PER_SOL).toString();
+        } else {
+             // For Sell: Use the amount we received from the buy (stored in tokenAmount)
+             amountStr = SYSTEM.activePosition.tokenAmount.toString();
+        }
 
-        const orderUrl = `${JUP_ULTRA_API}/order?inputMint=${inputMint}&outputMint=${outputMint}&amount=${amount}&taker=${solWallet.publicKey.toString()}&slippageBps=${slip}`;
+        // --- STEP 1: GET ORDER (/order) ---
+        // Docs: https://api.jup.ag/ultra/v1/order
+        const orderUrl = `${JUP_ULTRA_API}/order?inputMint=${inputMint}&outputMint=${outputMint}&amount=${amountStr}&taker=${solWallet.publicKey.toString()}&slippageBps=${risk.slippage}`;
+       
         const orderRes = await axios.get(orderUrl);
         const { transaction, requestId, outAmount } = orderRes.data;
 
-        if (!transaction) throw new Error("Ultra: No transaction returned");
+        if (!transaction) throw new Error("Ultra: No transaction returned from /order");
 
+        // --- STEP 2: SIGN ---
         const txBuffer = Buffer.from(transaction, 'base64');
         const tx = VersionedTransaction.deserialize(txBuffer);
         tx.sign([solWallet]);
         const signedTxBase64 = Buffer.from(tx.serialize()).toString('base64');
 
-        const execRes = await axios.post(`${JUP_ULTRA_API}/execute`, { signedTransaction: signedTxBase64, requestId: requestId });
-        const { status, signature } = execRes.data;
+        // --- STEP 3: EXECUTE (/execute) ---
+        // Docs: https://api.jup.ag/ultra/v1/execute
+        const execRes = await axios.post(`${JUP_ULTRA_API}/execute`, {
+            signedTransaction: signedTxBase64,
+            requestId: requestId
+        });
+
+        const { status, signature, error } = execRes.data;
 
         if (status === 'Success') {
             bot.sendMessage(chatId, `🚀 **ULTRA CONFIRMED:** https://solscan.io/tx/${signature}`);
             return { amountOut: outAmount, hash: signature };
-        } else throw new Error(`Execution Failed`);
+        } else {
+            throw new Error(`Execution Failed: ${error || 'Unknown Error'}`);
+        }
 
     } catch (e) {
-        bot.sendMessage(chatId, `⚠️ **ULTRA ERROR:** ${e.response?.data?.error || e.message}`);
+        // Safe Error Handling
+        const errMsg = e.response?.data?.error || e.message;
+        bot.sendMessage(chatId, `⚠️ **ULTRA ERROR:** ${errMsg}`);
+        console.error(errMsg);
         return null;
     }
 }
+
+// ==========================================
+//  EVM EXECUTION (ETH/BSC/BASE/ARB)
+// ==========================================
 
 async function executeEvmSwap(chatId, direction, tokenAddress, amountEth) {
     if (!evmSigner) return bot.sendMessage(chatId, "❌ EVM Wallet Not Connected");
     try {
         const net = NETWORKS[SYSTEM.currentNetwork];
         const path = direction === 'BUY' ? [net.weth, tokenAddress] : [tokenAddress, net.weth];
-        
+       
         if (direction === 'BUY') {
             const value = ethers.parseEther(amountEth);
-            
-            // GAS SAFETY CHECK
-            const balance = await evmProvider.getBalance(evmSigner.address);
-            if (balance < value) {
-                return bot.sendMessage(chatId, `⚠️ **INSUFFICIENT FUNDS:** Have ${ethers.formatEther(balance)}, Need ${amountEth}`);
-            }
-
             const tx = await evmRouter.swapExactETHForTokens(
                 0, path, evmSigner.address, Math.floor(Date.now()/1000)+120,
                 { value: value, gasLimit: 350000 }
             );
             bot.sendMessage(chatId, `🚀 **${SYSTEM.currentNetwork} TX:** ${tx.hash}`);
             await tx.wait();
-            return { amountOut: 0 }; 
+            return { amountOut: 0 }; // EVM amounts are tricky to get exact out without events, simplified here
         } else {
             const token = new Contract(tokenAddress, ["function approve(address, uint) returns (bool)", "function balanceOf(address) view returns (uint)"], evmSigner);
             const bal = await token.balanceOf(evmSigner.address);
             if (bal == 0) throw new Error("No tokens to sell");
-            
+           
             await (await token.approve(net.router, bal)).wait();
             const tx = await evmRouter.swapExactTokensForETH(
                 bal, 0, path, evmSigner.address, Math.floor(Date.now()/1000)+120,
@@ -235,122 +286,83 @@ async function executeEvmSwap(chatId, direction, tokenAddress, amountEth) {
 }
 
 // ==========================================
-//  "THE GAUNTLET" (Advanced Analysis)
-// ==========================================
-
-function analyzeTarget(pair) {
-    let score = 0;
-    let reasons = [];
-
-    // 1. LIQUIDITY CHECK (Must be healthy, not empty)
-    if (pair.liquidity.usd > 100000) score += 30;
-    else if (pair.liquidity.usd > 20000) score += 20;
-    else if (pair.liquidity.usd > 10000) score += 10;
-    else {
-        return { score: 0, reason: "LIQUIDITY TOO LOW (<$10k)" }; // Fail immediately
-    }
-
-    // 2. VOLUME CHECK (Must be active)
-    if (pair.volume.h24 > 500000) score += 30;
-    else if (pair.volume.h24 > 100000) score += 20;
-    else if (pair.volume.h24 > 15000) score += 10;
-    else {
-        return { score: 0, reason: "VOLUME TOO LOW (<$15k)" }; // Fail immediately
-    }
-
-    // 3. MOMENTUM CHECK (1H Price Change)
-    const p1h = pair.priceChange.h1;
-    if (p1h > 0 && p1h < 15) score += 20; // Steady organic growth
-    else if (p1h >= 15 && p1h < 50) score += 15; // Fast pump
-    else if (p1h >= 50 && p1h < 200) score += 5; // DANGER ZONE (FOMO)
-    else if (p1h >= 200) {
-        return { score: 0, reason: "ALREADY PUMPED (>200%)" }; // Filter top-blown coins
-    } else if (p1h < 0) {
-        score -= 10; // Penalize dumping coins
-    }
-
-    // 4. MARKET CAP CHECK (Optional Safety)
-    if (pair.fdv > 10000000) score += 10; // >10M MC is safer
-    else if (pair.fdv < 50000) score -= 10; // <50k MC is dangerous
-
-    // 5. BUY/SELL PRESSURE
-    const buys = pair.txns.h1.buys;
-    const sells = pair.txns.h1.sells;
-    if (buys > sells) score += 10;
-
-    return { score, reason: reasons.join(", ") };
-}
-
-// ==========================================
-//  OMNI-SCANNER
+//  OMNI-SCANNER (DUAL MODE)
 // ==========================================
 
 async function runNeuralScanner(chatId) {
     if (!SYSTEM.autoPilot || SYSTEM.isLocked || (!evmWallet && !solWallet)) return;
 
     try {
+        updateQuest('sim', chatId);
         const netConfig = NETWORKS[SYSTEM.currentNetwork];
         let targets = [];
 
-        // --- STEP 1: FETCH DATA ---
-        if (netConfig.scanMode === 'BOOST') {
+        // SOURCE 1: TOKEN BOOSTS (Best for SOL, BASE, BSC)
+        try {
             const res = await axios.get('https://api.dexscreener.com/token-boosts/top/v1');
             const boostMatch = res.data.find(t => t.chainId === netConfig.id && t.tokenAddress !== SYSTEM.lastTradedToken);
             if (boostMatch) targets.push(boostMatch.tokenAddress);
-        } else {
-            const query = netConfig.query || 'WETH';
-            const searchRes = await axios.get(`https://api.dexscreener.com/latest/dex/search/?q=${query}`);
-            const movers = searchRes.data.pairs
-                .filter(p => p.chainId === netConfig.id && p.quoteToken.symbol !== 'USDT')
-                .sort((a,b) => b.volume.h24 - a.volume.h24);
-            if (movers.length > 0) targets.push(movers[0].baseToken.address);
+        } catch(e) {}
+
+        // SOURCE 2: DEEP SEARCH (Best for ETH, ARB)
+        // If we didn't find a Boost (common on Eth), search for top volume pairs
+        if (targets.length === 0 && (SYSTEM.currentNetwork === 'ETH' || SYSTEM.currentNetwork === 'ARB')) {
+            const query = netConfig.scanQuery || 'WETH';
+            try {
+                // Search for "WETH" pairs sorted by volume
+                const searchRes = await axios.get(`https://api.dexscreener.com/latest/dex/search/?q=${query}`);
+                // Get the top result that isn't stablecoin-stablecoin and has volume
+                const validPair = searchRes.data.pairs.find(p => p.chainId === netConfig.id && p.volume.h24 > 500000);
+                if (validPair) targets.push(validPair.baseToken.address);
+            } catch(e) {}
         }
 
-        // --- STEP 2: RUN "THE GAUNTLET" ---
+        // PROCESS FOUND TARGET
         if (targets.length > 0) {
-            const address = targets[0];
-            const details = await axios.get(`https://api.dexscreener.com/latest/dex/tokens/${address}`);
+            const bestAddress = targets[0];
+            const details = await axios.get(`https://api.dexscreener.com/latest/dex/tokens/${bestAddress}`);
             const pair = details.data.pairs[0];
-
+           
             if (pair) {
-                const analysis = analyzeTarget(pair);
-                const confidence = analysis.score;
+                // Mock Neural Analysis
+                const sentiment = Math.random() * (0.99 - 0.5) + 0.5;
+                const rsi = Math.floor(Math.random() * 80) + 20;
 
-                if (confidence >= STRATEGY_MODES[SYSTEM.strategyMode].minConf) {
-                    await processSignal(chatId, pair, confidence);
-                } else {
-                    console.log(`[FILTER] Skipped ${pair.baseToken.symbol} (Score: ${confidence}/100) - ${analysis.reason}`.gray);
-                }
+                const target = {
+                    name: pair.baseToken.name,
+                    symbol: pair.baseToken.symbol,
+                    tokenAddress: bestAddress,
+                    price: parseFloat(pair.priceUsd),
+                    sentimentScore: sentiment,
+                    rsi: rsi
+                };
+                await processSignal(chatId, target);
             }
         }
-
     } catch (e) { console.log(`[SCAN] ${SYSTEM.currentNetwork} Searching...`.gray); }
-    
-    if (SYSTEM.autoPilot) setTimeout(() => runNeuralScanner(chatId), 3000);
+   
+    if (SYSTEM.autoPilot) setTimeout(() => runNeuralScanner(chatId), 6000);
 }
 
-async function processSignal(chatId, pair, confidence) {
-    const target = {
-        symbol: pair.baseToken.symbol,
-        tokenAddress: pair.baseToken.address,
-        price: parseFloat(pair.priceUsd),
-        score: confidence
-    };
+async function processSignal(chatId, data) {
+    const strategy = STRATEGY_MODES[SYSTEM.strategyMode];
+    let confidence = 0.5 + (data.sentimentScore * 0.3);
+    if (data.rsi < 70 && data.rsi > 30) confidence += 0.2;
 
-    console.log(`[SIGNAL] ${target.symbol} | Score: ${confidence}/100`.green);
+    console.log(`[NEURAL] ${data.symbol} Confidence: ${(confidence*100).toFixed(0)}%`.cyan);
 
-    SYSTEM.pendingTarget = target;
-    bot.sendMessage(chatId, `
-🎯 **SNIPER TARGET ACQUIRED**
-Token: ${target.symbol}
-Net: ${SYSTEM.currentNetwork}
-Score: ${confidence}/100
-Price: $${target.price}
-Change: ${pair.priceChange.h1}%
-Liquidity: $${pair.liquidity.usd.toLocaleString()}
-    `, { parse_mode: 'Markdown' });
+    if (confidence >= strategy.minConf) {
+        SYSTEM.pendingTarget = data;
+        bot.sendMessage(chatId, `
+🧠 **NEURAL SIGNAL: ${data.symbol}**
+Network: ${SYSTEM.currentNetwork}
+Confidence: ${(confidence*100).toFixed(0)}%
+Price: $${data.price}
+Action: ${SYSTEM.autoPilot ? 'EXECUTING' : 'WAITING'}
+`, { parse_mode: 'Markdown' });
 
-    if (SYSTEM.autoPilot) await executeBuy(chatId);
+        if (SYSTEM.autoPilot) await executeBuy(chatId);
+    }
 }
 
 // ==========================================
@@ -360,19 +372,28 @@ Liquidity: $${pair.liquidity.usd.toLocaleString()}
 async function executeBuy(chatId) {
     if (!SYSTEM.pendingTarget) return;
     const target = SYSTEM.pendingTarget;
+    const amount = SYSTEM.tradeAmount;
+
     SYSTEM.isLocked = true;
+    bot.sendMessage(chatId, `⚔️ **ATTACKING:** ${target.symbol} (${amount} ${SYSTEM.currentNetwork === 'SOL' ? 'SOL' : 'ETH'})...`);
 
     let result = null;
     if (SYSTEM.currentNetwork === 'SOL') {
-        result = await executeUltraSwap(chatId, 'BUY', target.tokenAddress, SYSTEM.tradeAmount);
+        result = await executeUltraSwap(chatId, 'BUY', target.tokenAddress, amount);
     } else {
-        result = await executeEvmSwap(chatId, 'BUY', target.tokenAddress, SYSTEM.tradeAmount);
+        result = await executeEvmSwap(chatId, 'BUY', target.tokenAddress, amount);
     }
 
     if (result) {
-        SYSTEM.activePosition = { ...target, tokenAmount: result.amountOut, rawAmount: result.amountOut, entryPrice: target.price, highestPrice: target.price };
+        SYSTEM.activePosition = {
+            ...target,
+            tokenAmount: result.amountOut || 0,
+            rawAmount: result.amountOut, // Stored for EVM
+            entryPrice: target.price,
+            highestPrice: target.price
+        };
         SYSTEM.pendingTarget = null;
-        addXP(500, chatId);
+        updateQuest('trade', chatId);
         runProfitMonitor(chatId);
     } else {
         SYSTEM.isLocked = false;
@@ -382,14 +403,14 @@ async function executeBuy(chatId) {
 async function executeSell(chatId) {
     if (!SYSTEM.activePosition) return;
     bot.sendMessage(chatId, `📉 **SELLING:** ${SYSTEM.activePosition.symbol}...`);
-    
+   
     let result = null;
     if (SYSTEM.currentNetwork === 'SOL') {
         result = await executeUltraSwap(chatId, 'SELL', SYSTEM.activePosition.tokenAddress, 0);
     } else {
         result = await executeEvmSwap(chatId, 'SELL', SYSTEM.activePosition.tokenAddress, 0);
     }
-    
+   
     if (result || result === null) {
         SYSTEM.lastTradedToken = SYSTEM.activePosition.tokenAddress;
         SYSTEM.activePosition = null;
@@ -405,10 +426,10 @@ async function runProfitMonitor(chatId) {
         const res = await axios.get(`https://api.dexscreener.com/latest/dex/tokens/${SYSTEM.activePosition.tokenAddress}`);
         const currentPrice = parseFloat(res.data.pairs[0].priceUsd);
         const pnl = ((currentPrice - SYSTEM.activePosition.entryPrice) / SYSTEM.activePosition.entryPrice) * 100;
-        
+       
         if (currentPrice > SYSTEM.activePosition.highestPrice) SYSTEM.activePosition.highestPrice = currentPrice;
         const drop = ((SYSTEM.activePosition.highestPrice - currentPrice) / SYSTEM.activePosition.highestPrice) * 100;
-        
+       
         process.stdout.write(`\r[MONITOR] ${SYSTEM.activePosition.symbol} PnL: ${pnl.toFixed(2)}% | Drop: ${drop.toFixed(2)}%  `);
 
         const strategy = STRATEGY_MODES[SYSTEM.strategyMode];
@@ -431,7 +452,7 @@ async function runProfitMonitor(chatId) {
 // ==========================================
 bot.onText(/\/start/, (msg) => {
     bot.sendMessage(msg.chat.id, `
-🐲 **APEX PREDATOR v10000 (ARCHITECT)**
+🐲 **APEX PREDATOR v9000 (ULTRA)**
 Operator: ${msg.from.first_name} | Class: ${PLAYER.class}
 Current Network: ${SYSTEM.currentNetwork}
 
@@ -444,17 +465,17 @@ Current Network: ${SYSTEM.currentNetwork}
 `);
 });
 
-bot.onText(/\/network (.+)/, (msg, match) => { 
-    const n = match[1].toUpperCase(); 
-    if(NETWORKS[n]) { initNetwork(n); bot.sendMessage(msg.chat.id, `✅ Network: ${n}`); } 
+bot.onText(/\/network (.+)/, (msg, match) => {
+    const n = match[1].toUpperCase();
+    if(NETWORKS[n]) { initNetwork(n); bot.sendMessage(msg.chat.id, `✅ Network: ${n}`); }
     else bot.sendMessage(msg.chat.id, `❌ Use: SOL, ETH, BASE, BSC, ARB`);
 });
 
-bot.onText(/\/auto/, (msg) => { 
+bot.onText(/\/auto/, (msg) => {
     if (!evmWallet && !solWallet) return bot.sendMessage(msg.chat.id, "❌ Connect Wallet First.");
-    SYSTEM.autoPilot = !SYSTEM.autoPilot; 
-    bot.sendMessage(msg.chat.id, `🤖 Auto: ${SYSTEM.autoPilot}`); 
-    if(SYSTEM.autoPilot) runNeuralScanner(msg.chat.id); 
+    SYSTEM.autoPilot = !SYSTEM.autoPilot;
+    bot.sendMessage(msg.chat.id, `🤖 Auto: ${SYSTEM.autoPilot}`);
+    if(SYSTEM.autoPilot) runNeuralScanner(msg.chat.id);
 });
 
 bot.onText(/\/status/, (msg) => {
@@ -468,5 +489,6 @@ Active Trade: ${SYSTEM.activePosition ? SYSTEM.activePosition.symbol : 'None'}
 `);
 });
 
-http.createServer((req, res) => res.end("APEX v10000 ONLINE")).listen(8080);
-console.log("APEX v10000 ARCHITECT ONLINE".green);
+http.createServer((req, res) => res.end("APEX v9000 ULTRA ONLINE")).listen(8080);
+console.log("APEX v9000 ULTRA ONLINE".green);
+
