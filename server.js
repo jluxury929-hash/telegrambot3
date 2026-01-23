@@ -1,10 +1,11 @@
 /**
  * ===============================================================================
- * APEX PREDATOR: NEURAL ULTRA v9001 (SHOTGUN + EXECUTOR)
+ * APEX PREDATOR: NEURAL ULTRA v9002 (SHOTGUN + EXECUTOR)
  * ===============================================================================
  * ARCH: Multi-Chain (EVM + SVM) | RPG System | Neural Scanner
  * SVM ENGINE: Jupiter Ultra v1 + Shotgun Broadcaster (QuickNode Mansion)
  * EVM ENGINE: Smart Contract Executor (Atomic Approve + Swap)
+ * NEW: Dynamic Trade Amount Control via /setamount
  * ===============================================================================
  */
 
@@ -157,7 +158,7 @@ async function executeEvmSwap(chatId, direction, tokenAddress, amountInput) {
 }
 
 // ==========================================
-//  SCANNER & MONITOR (96% ORIGINAL LOGIC)
+//  SCANNER & MONITOR
 // ==========================================
 async function runNeuralScanner(chatId) {
     if (!SYSTEM.autoPilot || SYSTEM.isLocked || (!evmWallet && !solWallet)) return;
@@ -196,7 +197,7 @@ async function processSignal(chatId, data) {
     if (data.rsi < 70 && data.rsi > 30) confidence += 0.2;
     if (confidence >= strategy.minConf) {
         SYSTEM.pendingTarget = data;
-        bot.sendMessage(chatId, `🧠 **NEURAL SIGNAL: ${data.symbol}**\nNet: ${SYSTEM.currentNetwork}\nConf: ${(confidence*100).toFixed(0)}%\nPrice: $${data.price}`, { parse_mode: 'Markdown' });
+        bot.sendMessage(chatId, `🧠 **NEURAL SIGNAL: ${data.symbol}**\nNet: ${SYSTEM.currentNetwork}\nConf: ${(confidence*100).toFixed(0)}%\nPrice: $${data.price}\nAmount: ${SYSTEM.tradeAmount}`, { parse_mode: 'Markdown' });
         if (SYSTEM.autoPilot) await executeBuy(chatId);
     }
 }
@@ -241,10 +242,35 @@ async function runProfitMonitor(chatId) {
 // ==========================================
 //  COMMANDS
 // ==========================================
-bot.onText(/\/start/, (msg) => { bot.sendMessage(msg.chat.id, `🐲 **APEX PREDATOR v9001**\nNet: ${SYSTEM.currentNetwork}\n/connect <seed>\n/network <SOL|ETH|BASE|BSC|ARB>\n/auto`); });
-bot.onText(/\/network (.+)/, (msg, match) => { const n = match[1].toUpperCase(); if(NETWORKS[n]) { initNetwork(n); bot.sendMessage(msg.chat.id, `✅ Network: ${n}`); } });
-bot.onText(/\/auto/, (msg) => { if (!evmWallet && !solWallet) return; SYSTEM.autoPilot = !SYSTEM.autoPilot; bot.sendMessage(msg.chat.id, `🤖 Auto: ${SYSTEM.autoPilot}`); if(SYSTEM.autoPilot) runNeuralScanner(msg.chat.id); });
-bot.onText(/\/status/, (msg) => { bot.sendMessage(msg.chat.id, `📊 **STATUS**\nNet: ${SYSTEM.currentNetwork}\nMode: ${SYSTEM.strategyMode}\nTrade: ${SYSTEM.activePosition ? SYSTEM.activePosition.symbol : 'None'}`); });
 
-http.createServer((req, res) => res.end("APEX v9001 ONLINE")).listen(8080);
-console.log("APEX v9001 MASTER READY".magenta);
+// NEW: Set Trade Amount command
+bot.onText(/\/setamount (.+)/, (msg, match) => {
+    const amount = match[1];
+    if (isNaN(amount) || parseFloat(amount) <= 0) {
+        return bot.sendMessage(msg.chat.id, "❌ **Invalid amount.** Please provide a number (e.g., 0.1)");
+    }
+    SYSTEM.tradeAmount = amount;
+    bot.sendMessage(msg.chat.id, `💰 **TRADE AMOUNT SET:** ${SYSTEM.tradeAmount} ${SYSTEM.currentNetwork === 'SOL' ? 'SOL' : 'ETH/BNB'}`);
+});
+
+bot.onText(/\/start/, (msg) => { 
+    bot.sendMessage(msg.chat.id, `
+🐲 **APEX PREDATOR v9002**
+Operator: ${msg.from.first_name} | Class: ${PLAYER.class}
+Current Network: ${SYSTEM.currentNetwork}
+Trade Amount: ${SYSTEM.tradeAmount}
+
+**/setamount <val>** - Change trade size
+**/connect <seed>** - Link Wallets
+**/network <SOL|ETH|BASE|BSC|ARB>**
+**/auto** - Toggle AI Scan
+**/status** - View Stats
+`); 
+});
+
+bot.onText(/\/network (.+)/, (msg, match) => { const n = match[1].toUpperCase(); if(NETWORKS[n]) { initNetwork(n); bot.sendMessage(msg.chat.id, `✅ Network: ${n}\nReminder: Use /setamount to adjust size for this chain.`); } });
+bot.onText(/\/auto/, (msg) => { if (!evmWallet && !solWallet) return; SYSTEM.autoPilot = !SYSTEM.autoPilot; bot.sendMessage(msg.chat.id, `🤖 Auto: ${SYSTEM.autoPilot}`); if(SYSTEM.autoPilot) runNeuralScanner(msg.chat.id); });
+bot.onText(/\/status/, (msg) => { bot.sendMessage(msg.chat.id, `📊 **STATUS**\nNet: ${SYSTEM.currentNetwork}\nTrade Amt: ${SYSTEM.tradeAmount}\nMode: ${SYSTEM.strategyMode}\nTrade: ${SYSTEM.activePosition ? SYSTEM.activePosition.symbol : 'None'}`); });
+
+http.createServer((req, res) => res.end("APEX v9002 ONLINE")).listen(8080);
+console.log("APEX v9002 MASTER READY".magenta);
