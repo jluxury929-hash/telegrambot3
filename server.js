@@ -1,15 +1,15 @@
 /**
  * ===============================================================================
- * APEX PREDATOR: NEURAL SIGNAL v8000.1 (AXIOS STABLE FIX)
+ * APEX PREDATOR: NEURAL SIGNAL v9000 (JUPITER ULTRA EDITION)
  * ===============================================================================
- * ARCH: Multi-Chain (EVM + SVM) | RPG System | Neural Scanner | Auto-Derivation
- * NETWORKS: ETH | SOLANA | BASE | BSC | ARBITRUM
- * FIX: Replaced fetch with Axios for stable Jupiter API connections
+ * ARCH: Multi-Chain (EVM + SVM) | RPG System | Neural Scanner
+ * ENGINE: Jupiter Ultra Swap API (v1) & Standard EVM
+ * SPECS: Strict adherence to Jupiter OpenAPI (/order -> /execute)
  * ===============================================================================
  */
 
 require('dotenv').config();
-const { ethers, JsonRpcProvider, Contract, Wallet } = require('ethers');
+const { ethers, JsonRpcProvider, Contract } = require('ethers');
 const { Connection, Keypair, VersionedTransaction, LAMPORTS_PER_SOL } = require('@solana/web3.js');
 const bip39 = require('bip39');
 const { derivePath } = require('ed25519-hd-key');
@@ -20,14 +20,16 @@ require('colors');
 
 // --- CONFIGURATION ---
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
+const JUP_ULTRA_API = "https://api.jup.ag/ultra/v1"; 
 
-// NETWORK DEFINITIONS
+// --- 5-CHAIN NETWORK DEFINITIONS ---
 const NETWORKS = {
     ETH: {
         id: 'ethereum', type: 'EVM',
         rpc: 'https://rpc.mevblocker.io',
         router: '0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D', // Uniswap V2
-        weth: '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2'
+        weth: '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
+        scanQuery: 'WETH' 
     },
     SOL: {
         id: 'solana', type: 'SVM',
@@ -49,28 +51,26 @@ const NETWORKS = {
         id: 'arbitrum', type: 'EVM',
         rpc: 'https://arb1.arbitrum.io/rpc',
         router: '0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506', // SushiSwap
-        weth: '0x82aF49447D8a07e3bd95BD0d56f35241523fBab1'
+        weth: '0x82aF49447D8a07e3bd95BD0d56f35241523fBab1',
+        scanQuery: 'WETH'
     }
 };
 
 // --- GLOBAL STATE ---
 let SYSTEM = {
-    currentNetwork: 'SOL', // Default
+    currentNetwork: 'SOL', 
     autoPilot: false,
     isLocked: false,
     riskProfile: 'MEDIUM',
     strategyMode: 'DAY',
-    tradeAmount: "0.01", // Default trade size
+    tradeAmount: "0.01", 
     activePosition: null,
     pendingTarget: null,
     lastTradedToken: null
 };
 
-// --- WALLET & PROVIDER STATE ---
-let evmWallet = null;  // Master HD Wallet
-let evmSigner = null;  // Connected to current provider
-let evmProvider = null;
-let evmRouter = null;
+// --- WALLET STATE ---
+let evmWallet = null, evmSigner = null, evmProvider = null, evmRouter = null;
 let solWallet = null;
 const solConnection = new Connection(NETWORKS.SOL.rpc, 'confirmed');
 
@@ -129,44 +129,34 @@ const getXpBar = () => {
 //  SETTINGS & CONFIG
 // ==========================================
 const RISK_PROFILES = {
-    LOW:    { slippage: 1,   stopLoss: 10, label: "LOW (Safe)" },
-    MEDIUM: { slippage: 5,   stopLoss: 20, label: "MEDIUM (Balanced)" },
-    HIGH:   { slippage: 10,  stopLoss: 40, label: "HIGH (Aggressive)" },
-    DEGEN:  { slippage: 20,  stopLoss: 60, label: "DEGEN (YOLO)" }
+    LOW:    { slippage: 50,  stopLoss: 10, label: "LOW (Safe)" },
+    MEDIUM: { slippage: 200, stopLoss: 20, label: "MEDIUM (Balanced)" },
+    HIGH:   { slippage: 500, stopLoss: 40, label: "HIGH (Aggressive)" },
+    DEGEN:  { slippage: 2000, stopLoss: 60, label: "DEGEN (YOLO)" }
 };
 
 const STRATEGY_MODES = {
-    SCALP:  { trail: 5,  minConf: 0.80, label: "SCALP (Quick Flip)" },
-    DAY:    { trail: 15, minConf: 0.85, label: "SWING (Trend)" },  
-    MOON:   { trail: 40, minConf: 0.90, label: "MOON (High Conviction)" }  
+    SCALP:  { trail: 5,  minConf: 0.80, label: "SCALP" },
+    DAY:    { trail: 15, minConf: 0.85, label: "SWING" },  
+    MOON:   { trail: 40, minConf: 0.90, label: "MOON" }  
 };
 
 // ==========================================
-//  AUTH & NETWORK SWITCHING
+//  AUTH & NETWORK
 // ==========================================
-
-// COMMAND: /connect <mnemonic>
 bot.onText(/\/connect (.+)/, async (msg, match) => {
     const chatId = msg.chat.id;
     const rawMnemonic = match[1].trim();
-
-    // Security: Delete msg
     try { await bot.deleteMessage(chatId, msg.message_id); } catch(e){}
 
-    if (!bip39.validateMnemonic(rawMnemonic)) {
-        return bot.sendMessage(chatId, "❌ **INVALID SEED PHRASE.**");
-    }
+    if (!bip39.validateMnemonic(rawMnemonic)) return bot.sendMessage(chatId, "❌ **INVALID SEED.**");
 
     try {
-        // 1. Derive EVM Wallet (Base, Eth, Bsc, Arb)
         evmWallet = ethers.HDNodeWallet.fromPhrase(rawMnemonic);
-
-        // 2. Derive Solana Wallet (m/44'/501'/0'/0')
         const seed = bip39.mnemonicToSeedSync(rawMnemonic);
         const derivedSeed = derivePath("m/44'/501'/0'/0'", seed.toString('hex')).key;
         solWallet = Keypair.fromSeed(derivedSeed);
 
-        // 3. Initialize Network
         await initNetwork(SYSTEM.currentNetwork);
 
         bot.sendMessage(chatId, `
@@ -174,34 +164,129 @@ bot.onText(/\/connect (.+)/, async (msg, match) => {
 \`————————————————————————————\`
 **EVM:** \`${evmWallet.address}\`
 **SOL:** \`${solWallet.publicKey.toString()}\`
-**Network:** ${SYSTEM.currentNetwork}
 \`————————————————————————————\`
-_Seed scrubbed. Ready for commands._
 `, {parse_mode: 'Markdown'});
-    } catch (e) {
-        bot.sendMessage(chatId, `❌ Error: ${e.message}`);
-    }
+    } catch (e) { bot.sendMessage(chatId, `❌ Error: ${e.message}`); }
 });
 
 async function initNetwork(netKey) {
     SYSTEM.currentNetwork = netKey;
     const net = NETWORKS[netKey];
-
     if (net.type === 'EVM' && evmWallet) {
         evmProvider = new JsonRpcProvider(net.rpc);
-        evmSigner = evmWallet.connect(evmProvider); // Connect wallet to provider
+        evmSigner = evmWallet.connect(evmProvider);
         evmRouter = new Contract(net.router, [
             "function swapExactETHForTokens(uint min, address[] path, address to, uint dead) external payable returns (uint[])",
             "function swapExactTokensForETH(uint amountIn, uint amountOutMin, address[] path, address to, uint dead) external returns (uint[])",
-            "function getAmountsOut(uint amt, address[] path) external view returns (uint[])",
-            "function approve(address spender, uint256 amount) external returns (bool)"
+            "function approve(address spender, uint256 amount) external returns (bool)",
+            "function balanceOf(address owner) view returns (uint)"
         ], evmSigner);
     }
     console.log(`[NET] Switched to ${netKey}`.yellow);
 }
 
 // ==========================================
-//  NEURAL ORACLE (SCANNER)
+//  SOLANA EXECUTION (JUPITER ULTRA v1)
+// ==========================================
+
+async function executeUltraSwap(chatId, direction, tokenAddress, amountInput) {
+    if (!solWallet) return bot.sendMessage(chatId, "❌ Wallet Not Connected");
+
+    try {
+        const risk = RISK_PROFILES[SYSTEM.riskProfile];
+        const inputMint = direction === 'BUY' ? 'So11111111111111111111111111111111111111112' : tokenAddress;
+        const outputMint = direction === 'BUY' ? tokenAddress : 'So11111111111111111111111111111111111111112';
+        
+        // Determine Amount
+        let amountStr;
+        if (direction === 'BUY') {
+             // For Buy: SOL to Lamports
+             amountStr = Math.floor(amountInput * LAMPORTS_PER_SOL).toString();
+        } else {
+             // For Sell: Use the amount we received from the buy (stored in tokenAmount)
+             amountStr = SYSTEM.activePosition.tokenAmount.toString();
+        }
+
+        // --- STEP 1: GET ORDER (/order) ---
+        // Docs: https://api.jup.ag/ultra/v1/order
+        const orderUrl = `${JUP_ULTRA_API}/order?inputMint=${inputMint}&outputMint=${outputMint}&amount=${amountStr}&taker=${solWallet.publicKey.toString()}&slippageBps=${risk.slippage}`;
+        
+        const orderRes = await axios.get(orderUrl);
+        const { transaction, requestId, outAmount } = orderRes.data;
+
+        if (!transaction) throw new Error("Ultra: No transaction returned from /order");
+
+        // --- STEP 2: SIGN ---
+        const txBuffer = Buffer.from(transaction, 'base64');
+        const tx = VersionedTransaction.deserialize(txBuffer);
+        tx.sign([solWallet]);
+        const signedTxBase64 = Buffer.from(tx.serialize()).toString('base64');
+
+        // --- STEP 3: EXECUTE (/execute) ---
+        // Docs: https://api.jup.ag/ultra/v1/execute
+        const execRes = await axios.post(`${JUP_ULTRA_API}/execute`, {
+            signedTransaction: signedTxBase64,
+            requestId: requestId
+        });
+
+        const { status, signature, error } = execRes.data;
+
+        if (status === 'Success') {
+            bot.sendMessage(chatId, `🚀 **ULTRA CONFIRMED:** https://solscan.io/tx/${signature}`);
+            return { amountOut: outAmount, hash: signature };
+        } else {
+            throw new Error(`Execution Failed: ${error || 'Unknown Error'}`);
+        }
+
+    } catch (e) {
+        // Safe Error Handling
+        const errMsg = e.response?.data?.error || e.message;
+        bot.sendMessage(chatId, `⚠️ **ULTRA ERROR:** ${errMsg}`);
+        console.error(errMsg);
+        return null;
+    }
+}
+
+// ==========================================
+//  EVM EXECUTION (ETH/BSC/BASE/ARB)
+// ==========================================
+
+async function executeEvmSwap(chatId, direction, tokenAddress, amountEth) {
+    if (!evmSigner) return bot.sendMessage(chatId, "❌ EVM Wallet Not Connected");
+    try {
+        const net = NETWORKS[SYSTEM.currentNetwork];
+        const path = direction === 'BUY' ? [net.weth, tokenAddress] : [tokenAddress, net.weth];
+        
+        if (direction === 'BUY') {
+            const value = ethers.parseEther(amountEth);
+            const tx = await evmRouter.swapExactETHForTokens(
+                0, path, evmSigner.address, Math.floor(Date.now()/1000)+120,
+                { value: value, gasLimit: 350000 }
+            );
+            bot.sendMessage(chatId, `🚀 **${SYSTEM.currentNetwork} TX:** ${tx.hash}`);
+            await tx.wait();
+            return { amountOut: 0 }; // EVM amounts are tricky to get exact out without events, simplified here
+        } else {
+            const token = new Contract(tokenAddress, ["function approve(address, uint) returns (bool)", "function balanceOf(address) view returns (uint)"], evmSigner);
+            const bal = await token.balanceOf(evmSigner.address);
+            if (bal == 0) throw new Error("No tokens to sell");
+            
+            await (await token.approve(net.router, bal)).wait();
+            const tx = await evmRouter.swapExactTokensForETH(
+                bal, 0, path, evmSigner.address, Math.floor(Date.now()/1000)+120,
+                { gasLimit: 350000 }
+            );
+            bot.sendMessage(chatId, `🚀 **${SYSTEM.currentNetwork} SELL:** ${tx.hash}`);
+            return { amountOut: 0 };
+        }
+    } catch(e) {
+        bot.sendMessage(chatId, `⚠️ **EVM ERROR:** ${e.message}`);
+        return null;
+    }
+}
+
+// ==========================================
+//  OMNI-SCANNER (DUAL MODE)
 // ==========================================
 
 async function runNeuralScanner(chatId) {
@@ -209,32 +294,48 @@ async function runNeuralScanner(chatId) {
 
     try {
         updateQuest('sim', chatId);
-        const chainId = NETWORKS[SYSTEM.currentNetwork].id;
-        
-        // DexScreener Check
-        const res = await axios.get('https://api.dexscreener.com/token-boosts/top/v1');
-        
-        // Filter for CURRENT network
-        const valid = res.data.find(t => t.chainId === chainId && t.tokenAddress !== SYSTEM.lastTradedToken);
+        const netConfig = NETWORKS[SYSTEM.currentNetwork];
+        let targets = [];
 
-        if (valid) {
-            const details = await axios.get(`https://api.dexscreener.com/latest/dex/tokens/${valid.tokenAddress}`);
+        // SOURCE 1: TOKEN BOOSTS (Best for SOL, BASE, BSC)
+        try {
+            const res = await axios.get('https://api.dexscreener.com/token-boosts/top/v1');
+            const boostMatch = res.data.find(t => t.chainId === netConfig.id && t.tokenAddress !== SYSTEM.lastTradedToken);
+            if (boostMatch) targets.push(boostMatch.tokenAddress);
+        } catch(e) {}
+
+        // SOURCE 2: DEEP SEARCH (Best for ETH, ARB)
+        // If we didn't find a Boost (common on Eth), search for top volume pairs
+        if (targets.length === 0 && (SYSTEM.currentNetwork === 'ETH' || SYSTEM.currentNetwork === 'ARB')) {
+            const query = netConfig.scanQuery || 'WETH'; 
+            try {
+                // Search for "WETH" pairs sorted by volume
+                const searchRes = await axios.get(`https://api.dexscreener.com/latest/dex/search/?q=${query}`);
+                // Get the top result that isn't stablecoin-stablecoin and has volume
+                const validPair = searchRes.data.pairs.find(p => p.chainId === netConfig.id && p.volume.h24 > 500000); 
+                if (validPair) targets.push(validPair.baseToken.address);
+            } catch(e) {}
+        }
+
+        // PROCESS FOUND TARGET
+        if (targets.length > 0) {
+            const bestAddress = targets[0]; 
+            const details = await axios.get(`https://api.dexscreener.com/latest/dex/tokens/${bestAddress}`);
             const pair = details.data.pairs[0];
-
+            
             if (pair) {
-                // AI Logic Simulation
+                // Mock Neural Analysis
                 const sentiment = Math.random() * (0.99 - 0.5) + 0.5;
                 const rsi = Math.floor(Math.random() * 80) + 20;
-                
+
                 const target = {
                     name: pair.baseToken.name,
                     symbol: pair.baseToken.symbol,
-                    tokenAddress: pair.baseToken.address,
+                    tokenAddress: bestAddress,
                     price: parseFloat(pair.priceUsd),
                     sentimentScore: sentiment,
                     rsi: rsi
                 };
-
                 await processSignal(chatId, target);
             }
         }
@@ -265,7 +366,7 @@ Action: ${SYSTEM.autoPilot ? 'EXECUTING' : 'WAITING'}
 }
 
 // ==========================================
-//  EXECUTION ENGINE (AXIOS UPGRADE)
+//  EXECUTION WRAPPERS
 // ==========================================
 
 async function executeBuy(chatId) {
@@ -277,19 +378,19 @@ async function executeBuy(chatId) {
     bot.sendMessage(chatId, `⚔️ **ATTACKING:** ${target.symbol} (${amount} ${SYSTEM.currentNetwork === 'SOL' ? 'SOL' : 'ETH'})...`);
 
     let result = null;
-
     if (SYSTEM.currentNetwork === 'SOL') {
-        result = await buySolana(chatId, target.tokenAddress, amount);
+        result = await executeUltraSwap(chatId, 'BUY', target.tokenAddress, amount);
     } else {
-        result = await buyEVM(chatId, target.tokenAddress, amount);
+        result = await executeEvmSwap(chatId, 'BUY', target.tokenAddress, amount);
     }
 
     if (result) {
         SYSTEM.activePosition = {
             ...target,
-            entryPrice: target.price, // USD Price
-            tokenAmount: result.amountOut,
-            rawAmount: result.amountOut // Stored for swapping back
+            tokenAmount: result.amountOut || 0,
+            rawAmount: result.amountOut, // Stored for EVM
+            entryPrice: target.price,
+            highestPrice: target.price
         };
         SYSTEM.pendingTarget = null;
         updateQuest('trade', chatId);
@@ -301,177 +402,57 @@ async function executeBuy(chatId) {
 
 async function executeSell(chatId) {
     if (!SYSTEM.activePosition) return;
-    const pos = SYSTEM.activePosition;
-
-    bot.sendMessage(chatId, `📉 **SELLING:** ${pos.symbol}...`);
-
+    bot.sendMessage(chatId, `📉 **SELLING:** ${SYSTEM.activePosition.symbol}...`);
+    
     let result = null;
     if (SYSTEM.currentNetwork === 'SOL') {
-        result = await sellSolana(chatId, pos.tokenAddress, pos.tokenAmount);
+        result = await executeUltraSwap(chatId, 'SELL', SYSTEM.activePosition.tokenAddress, 0);
     } else {
-        result = await sellEVM(chatId, pos.tokenAddress, pos.rawAmount);
+        result = await executeEvmSwap(chatId, 'SELL', SYSTEM.activePosition.tokenAddress, 0);
     }
-
-    if (result) {
-        SYSTEM.lastTradedToken = pos.tokenAddress;
+    
+    if (result || result === null) {
+        SYSTEM.lastTradedToken = SYSTEM.activePosition.tokenAddress;
         SYSTEM.activePosition = null;
         SYSTEM.isLocked = false;
-        bot.sendMessage(chatId, `✅ **TRADE COMPLETE.** Resuming Scan.`);
-        if(SYSTEM.autoPilot) runNeuralScanner(chatId);
+        bot.sendMessage(chatId, `✅ **CLOSED.** Resuming Scan.`);
+        if (SYSTEM.autoPilot) runNeuralScanner(chatId);
     }
 }
-
-// --- SOLANA SPECIFIC (JUPITER VIA AXIOS) ---
-async function buySolana(chatId, tokenAddr, amountSol) {
-    try {
-        const inputMint = 'So11111111111111111111111111111111111111112'; // SOL
-        const amount = Math.floor(amountSol * LAMPORTS_PER_SOL);
-        const slip = RISK_PROFILES[SYSTEM.riskProfile].slippage * 100; // bps
-
-        // 1. Get Quote
-        const quoteUrl = `https://quote-api.jup.ag/v6/quote?inputMint=${inputMint}&outputMint=${tokenAddr}&amount=${amount}&slippageBps=${slip}`;
-        const quoteRes = await axios.get(quoteUrl);
-        const quote = quoteRes.data;
-
-        if(!quote || quote.error) throw new Error("No Route Found");
-
-        // 2. Get Transaction
-        const swapRes = await axios.post('https://quote-api.jup.ag/v6/swap', {
-            quoteResponse: quote,
-            userPublicKey: solWallet.publicKey.toString(),
-            wrapAndUnwrapSol: true
-        });
-        
-        const { swapTransaction } = swapRes.data;
-
-        // 3. Sign & Send
-        const tx = VersionedTransaction.deserialize(Buffer.from(swapTransaction, 'base64'));
-        tx.sign([solWallet]);
-        const txid = await solConnection.sendRawTransaction(tx.serialize(), {skipPreflight: true});
-        
-        bot.sendMessage(chatId, `🚀 **SOL TX:** https://solscan.io/tx/${txid}`);
-        return { amountOut: quote.outAmount };
-    } catch(e) { 
-        bot.sendMessage(chatId, `⚠️ SOL Fail: ${e.message}`); 
-        console.error(e);
-        return null; 
-    }
-}
-
-async function sellSolana(chatId, tokenAddr, amountToken) {
-    try {
-        const outputMint = 'So11111111111111111111111111111111111111112';
-        const slip = RISK_PROFILES[SYSTEM.riskProfile].slippage * 100;
-
-        // 1. Get Quote
-        const quoteUrl = `https://quote-api.jup.ag/v6/quote?inputMint=${tokenAddr}&outputMint=${outputMint}&amount=${amountToken}&slippageBps=${slip}`;
-        const quoteRes = await axios.get(quoteUrl);
-        const quote = quoteRes.data;
-
-        // 2. Get Transaction
-        const swapRes = await axios.post('https://quote-api.jup.ag/v6/swap', {
-            quoteResponse: quote,
-            userPublicKey: solWallet.publicKey.toString(),
-            wrapAndUnwrapSol: true
-        });
-        
-        const { swapTransaction } = swapRes.data;
-
-        // 3. Sign & Send
-        const tx = VersionedTransaction.deserialize(Buffer.from(swapTransaction, 'base64'));
-        tx.sign([solWallet]);
-        const txid = await solConnection.sendRawTransaction(tx.serialize(), {skipPreflight: true});
-        return { hash: txid };
-    } catch(e) { 
-        bot.sendMessage(chatId, `⚠️ SOL Sell Fail: ${e.message}`); 
-        return null; 
-    }
-}
-
-// --- EVM SPECIFIC (UNISWAP V2) ---
-async function buyEVM(chatId, tokenAddr, amountEth) {
-    try {
-        const net = NETWORKS[SYSTEM.currentNetwork];
-        const path = [net.weth, tokenAddr];
-        const value = ethers.parseEther(amountEth);
-        
-        const tx = await evmRouter.swapExactETHForTokens(
-            0, path, evmSigner.address, Math.floor(Date.now()/1000)+120,
-            { value: value, gasLimit: 300000 }
-        );
-        bot.sendMessage(chatId, `🚀 **${SYSTEM.currentNetwork} TX:** ${tx.hash}`);
-        await tx.wait(); 
-        return { amountOut: 0 }; 
-    } catch(e) { bot.sendMessage(chatId, `⚠️ EVM Fail: ${e.message}`); return null; }
-}
-
-async function sellEVM(chatId, tokenAddr, amountToken) {
-    try {
-        const net = NETWORKS[SYSTEM.currentNetwork];
-        const path = [tokenAddr, net.weth];
-        
-        const token = new Contract(tokenAddr, ["function approve(address, uint) returns (bool)", "function balanceOf(address) view returns (uint)"], evmSigner);
-        const bal = await token.balanceOf(evmSigner.address); 
-        await (await token.approve(net.router, bal)).wait();
-
-        const tx = await evmRouter.swapExactTokensForETH(
-            bal, 0, path, evmSigner.address, Math.floor(Date.now()/1000)+120,
-            { gasLimit: 350000 }
-        );
-        await tx.wait();
-        return { hash: tx.hash };
-    } catch(e) { bot.sendMessage(chatId, `⚠️ EVM Sell Fail: ${e.message}`); return null; }
-}
-
-// ==========================================
-//  PROFIT MONITOR
-// ==========================================
 
 async function runProfitMonitor(chatId) {
-    if (!SYSTEM.activePosition || !SYSTEM.isLocked) return;
-
+    if (!SYSTEM.activePosition) return;
     try {
-        // Get LIVE Price from DexScreener
         const res = await axios.get(`https://api.dexscreener.com/latest/dex/tokens/${SYSTEM.activePosition.tokenAddress}`);
         const currentPrice = parseFloat(res.data.pairs[0].priceUsd);
-        const entryPrice = SYSTEM.activePosition.entryPrice;
+        const pnl = ((currentPrice - SYSTEM.activePosition.entryPrice) / SYSTEM.activePosition.entryPrice) * 100;
         
-        const pnl = ((currentPrice - entryPrice) / entryPrice) * 100;
-        
-        if (!SYSTEM.activePosition.highestPrice || currentPrice > SYSTEM.activePosition.highestPrice) {
-            SYSTEM.activePosition.highestPrice = currentPrice;
-        }
-        
+        if (currentPrice > SYSTEM.activePosition.highestPrice) SYSTEM.activePosition.highestPrice = currentPrice;
         const drop = ((SYSTEM.activePosition.highestPrice - currentPrice) / SYSTEM.activePosition.highestPrice) * 100;
+        
+        process.stdout.write(`\r[MONITOR] ${SYSTEM.activePosition.symbol} PnL: ${pnl.toFixed(2)}% | Drop: ${drop.toFixed(2)}%  `);
+
         const strategy = STRATEGY_MODES[SYSTEM.strategyMode];
         const risk = RISK_PROFILES[SYSTEM.riskProfile];
 
-        process.stdout.write(`\r[MONITOR] ${SYSTEM.activePosition.symbol} PnL: ${pnl.toFixed(2)}% | Drop: ${drop.toFixed(2)}%  `);
-
         if (drop >= strategy.trail && pnl > 1) {
-            bot.sendMessage(chatId, `📉 **TRAILING STOP:** Reversing at +${pnl.toFixed(2)}%`);
-            await executeSell(chatId);
-        } 
-        else if (pnl <= -risk.stopLoss) {
-            bot.sendMessage(chatId, `🛑 **STOP LOSS:** Exiting at ${pnl.toFixed(2)}%`);
-            await executeSell(chatId);
+             bot.sendMessage(chatId, `📉 **TRAILING STOP:** Securing +${pnl.toFixed(2)}%`);
+             await executeSell(chatId);
+        } else if (pnl <= -risk.stopLoss) {
+             bot.sendMessage(chatId, `🛑 **STOP LOSS:** Exiting at ${pnl.toFixed(2)}%`);
+             await executeSell(chatId);
+        } else {
+             setTimeout(() => runProfitMonitor(chatId), 4000);
         }
-        else {
-            setTimeout(() => runProfitMonitor(chatId), 4000);
-        }
-
-    } catch(e) { 
-        setTimeout(() => runProfitMonitor(chatId), 4000); 
-    }
+    } catch(e) { setTimeout(() => runProfitMonitor(chatId), 4000); }
 }
 
 // ==========================================
-//  COMMAND SUITE
+//  COMMANDS
 // ==========================================
-
 bot.onText(/\/start/, (msg) => {
     bot.sendMessage(msg.chat.id, `
-🐲 **APEX PREDATOR v8000.1 (AXIOS)**
+🐲 **APEX PREDATOR v9000 (ULTRA)**
 Operator: ${msg.from.first_name} | Class: ${PLAYER.class}
 Current Network: ${SYSTEM.currentNetwork}
 
@@ -484,29 +465,17 @@ Current Network: ${SYSTEM.currentNetwork}
 `);
 });
 
-bot.onText(/\/network (.+)/, (msg, match) => {
-    const net = match[1].toUpperCase();
-    if(NETWORKS[net]) {
-        initNetwork(net);
-        bot.sendMessage(msg.chat.id, `✅ **NETWORK:** Switched to ${net}`);
-    } else {
-        bot.sendMessage(msg.chat.id, `❌ Invalid. Use: SOL, ETH, BSC, BASE, ARB`);
-    }
+bot.onText(/\/network (.+)/, (msg, match) => { 
+    const n = match[1].toUpperCase(); 
+    if(NETWORKS[n]) { initNetwork(n); bot.sendMessage(msg.chat.id, `✅ Network: ${n}`); } 
+    else bot.sendMessage(msg.chat.id, `❌ Use: SOL, ETH, BASE, BSC, ARB`);
 });
 
-bot.onText(/\/auto/, (msg) => {
+bot.onText(/\/auto/, (msg) => { 
     if (!evmWallet && !solWallet) return bot.sendMessage(msg.chat.id, "❌ Connect Wallet First.");
-    SYSTEM.autoPilot = !SYSTEM.autoPilot;
-    bot.sendMessage(msg.chat.id, `🤖 **AUTO-PILOT:** ${SYSTEM.autoPilot ? 'ON' : 'OFF'}`);
-    if(SYSTEM.autoPilot) runNeuralScanner(msg.chat.id);
-});
-
-bot.onText(/\/risk (.+)/, (msg, match) => {
-    const r = match[1].toUpperCase();
-    if(RISK_PROFILES[r]) {
-        SYSTEM.riskProfile = r;
-        bot.sendMessage(msg.chat.id, `⚠️ Risk set to: ${r}`);
-    }
+    SYSTEM.autoPilot = !SYSTEM.autoPilot; 
+    bot.sendMessage(msg.chat.id, `🤖 Auto: ${SYSTEM.autoPilot}`); 
+    if(SYSTEM.autoPilot) runNeuralScanner(msg.chat.id); 
 });
 
 bot.onText(/\/status/, (msg) => {
@@ -520,6 +489,5 @@ Active Trade: ${SYSTEM.activePosition ? SYSTEM.activePosition.symbol : 'None'}
 `);
 });
 
-// Start Server
-http.createServer((req, res) => res.end("APEX v8000 ONLINE")).listen(8080);
-console.log("APEX v8000 HYBRID ONLINE".magenta);
+http.createServer((req, res) => res.end("APEX v9000 ULTRA ONLINE")).listen(8080);
+console.log("APEX v9000 ULTRA ONLINE".green);
