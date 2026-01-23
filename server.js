@@ -1,10 +1,12 @@
 /**
  * ===============================================================================
- * ⚡ APEX PREDATOR v6000.5 (AUTO-FIX EDITION)
+ * ⚡ APEX PREDATOR v6000.1 (EXECUTION PATCH)
  * ===============================================================================
- * 1. FIXED: /auto now loops correctly and instantly finds trades.
- * 2. PROTECTED: "0 ETH" trades are blocked before execution.
- * 3. STRICT: Manual mode requires /buy or /sell command.
+ * FIXES:
+ * 1. PROTECTOR: Prevents "0 ETH" trades by enforcing min size or skipping.
+ * 2. SIZING: Strictly follows /setamount (Percent or Fixed) for ALL trades.
+ * 3. SPEED: Auto-Mode executes instantly. Liquidity errors trigger instant retry.
+ * 4. MANUAL: strict "Alert Only" mode.
  * ===============================================================================
  */
 
@@ -19,7 +21,7 @@ require('colors');
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
 const AI_API_URL = process.env.AI_API_URL || null; 
 
-// MEV-PROTECTED CLUSTER
+// MEV-PROTECTED CLUSTER (Fastest Nodes)
 const RPC_POOL = [
     "https://rpc.mevblocker.io",        
     "https://eth.llamarpc.com",         
@@ -29,6 +31,7 @@ const RPC_POOL = [
 const ROUTER_ADDR = "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D";
 const WETH = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
 
+// Initialize Provider
 const network = ethers.Network.from(1);
 let provider = new JsonRpcProvider(RPC_POOL[0], network, { staticNetwork: network });
 
@@ -36,6 +39,7 @@ const bot = new TelegramBot(TELEGRAM_TOKEN, {
     polling: { interval: 100, autoStart: true, params: { timeout: 10 } }
 });
 
+// Global Wallet & Router
 let wallet = null;
 let router = null;
 
@@ -74,13 +78,13 @@ let SYSTEM = {
     autoPilot: false,
     isLocked: false,
     nonce: null,
-    riskProfile: 'HIGH', 
+    riskProfile: 'HIGH', // Default to fast execution
     strategyMode: 'SCALP',
     
-    // SIZING DEFAULTS
+    // STRICT SIZING DEFAULTS
     tradeStyle: 'PERCENT', 
     tradeValue: 5,         // Default: 5%
-    gasReserve: ethers.parseEther("0.003"), // Keeps 0.003 ETH safe
+    gasReserve: ethers.parseEther("0.01"), // Protection Buffer
 
     activePosition: null,
     pendingTarget: null,
@@ -88,7 +92,7 @@ let SYSTEM = {
 };
 
 // ==========================================
-//  TRADE SIZING PROTECTOR
+//  TRADE SIZING PROTECTOR (CRITICAL FIX)
 // ==========================================
 
 async function getSafeTradeAmount(chatId) {
@@ -97,30 +101,32 @@ async function getSafeTradeAmount(chatId) {
     try {
         const balance = await provider.getBalance(wallet.address);
         
-        // 1. Gas Protector
-        if (balance <= SYSTEM.gasReserve) {
-            bot.sendMessage(chatId, `⚠️ **LOW FUNDS:** Balance (${ethers.formatEther(balance)}) is below gas reserve.`);
+        // 1. Gas Protector: Ensure we have at least 0.015 ETH total
+        if (balance < ethers.parseEther("0.015")) {
+            bot.sendMessage(chatId, `⚠️ **CRITICAL:** Wallet Empty or < 0.015 ETH.`);
             return 0n;
         }
 
         let amount = 0n;
-        const safeBalance = balance - SYSTEM.gasReserve; 
+        const safeBalance = balance - SYSTEM.gasReserve; // Always subtract gas reserve
 
         if (SYSTEM.tradeStyle === 'PERCENT') {
-            const percentBn = BigInt(Math.floor(SYSTEM.tradeValue * 100)); // e.g. 5% -> 500
+            // Percent logic: (Balance - Gas) * (Percent / 100)
+            const percentBn = BigInt(Math.floor(SYSTEM.tradeValue * 100)); // e.g. 5.0 -> 500
             amount = (safeBalance * percentBn) / 10000n;
         } else {
+            // Fixed logic
             amount = ethers.parseEther(SYSTEM.tradeValue.toString());
         }
 
         // 2. Overdraft Protector
         if (amount > safeBalance) {
-            amount = safeBalance; 
+            amount = safeBalance; // Cap at max available
         }
 
-        // 3. Dust Protector
+        // 3. Dust Protector (Prevent 0 value trades)
         if (amount <= 0n) {
-            bot.sendMessage(chatId, `⚠️ **ERROR:** Trade size is 0 ETH.`);
+            bot.sendMessage(chatId, `⚠️ **ERROR:** Calculated trade size is 0 ETH. Check /setamount.`);
             return 0n;
         }
 
@@ -133,7 +139,7 @@ async function getSafeTradeAmount(chatId) {
 }
 
 // ==========================================
-//  EXECUTION ENGINE
+//  EXECUTION ENGINE (The Muscle)
 // ==========================================
 
 async function forceConfirm(chatId, type, tokenName, txBuilder) {
@@ -159,7 +165,7 @@ async function forceConfirm(chatId, type, tokenName, txBuilder) {
         try {
             const receipt = await Promise.race([
                 tx.wait(1),
-                new Promise((_, reject) => setTimeout(() => reject(new Error("STALL")), 8000))
+                new Promise((_, reject) => setTimeout(() => reject(new Error("STALL")), 10000))
             ]);
 
             if (receipt && receipt.status === 1) {
@@ -168,11 +174,11 @@ async function forceConfirm(chatId, type, tokenName, txBuilder) {
                 return receipt;
             }
         } catch (err) {
-            if (attempt < 2) { 
+            if (attempt < 2) { // Only 1 retry to keep it fast
                 attempt++;
-                tx = await broadcast(initialBribe + ethers.parseUnits("3", "gwei")); 
+                tx = await broadcast(initialBribe + ethers.parseUnits("2", "gwei")); 
             } else {
-                bot.sendMessage(chatId, `❌ **FAIL:** TX Dropped.`);
+                bot.sendMessage(chatId, `❌ **FAIL:** TX Dropped/Stalled.`);
                 return null;
             }
         }
@@ -180,14 +186,17 @@ async function forceConfirm(chatId, type, tokenName, txBuilder) {
 }
 
 async function executeBuy(chatId, target) {
+    // 1. GET SAFE AMOUNT
     const tradeValue = await getSafeTradeAmount(chatId);
-    if (tradeValue === 0n) return; 
+    if (tradeValue === 0n) return; // Stop if 0
 
+    // 2. LIQUIDITY CHECK (Protector)
     let amounts;
     try {
         amounts = await router.getAmountsOut(tradeValue, [WETH, target.tokenAddress]);
     } catch(e) {
-        console.log(`[SKIP] ${target.symbol}: Low Liquidity`.yellow);
+        // If liquidity fails, we log it and RETURN immediately so Auto-Mode can scan next.
+        console.log(`[SKIP] ${target.symbol}: Low Liquidity / Honeypot`.yellow);
         if(!SYSTEM.autoPilot) bot.sendMessage(chatId, `⚠️ **SKIP:** ${target.symbol} has no liquidity.`);
         return; 
     }
@@ -195,6 +204,7 @@ async function executeBuy(chatId, target) {
     const risk = RISK_PROFILES[SYSTEM.riskProfile];
     const minOut = (amounts[1] * BigInt(10000 - risk.slippage)) / 10000n;
 
+    // 3. EXECUTE
     const receipt = await forceConfirm(chatId, "BUY", target.symbol, async (bribe, maxFee, nonce) => {
         return await router.swapExactETHForTokens.populateTransaction(
             minOut, [WETH, target.tokenAddress], wallet.address, Math.floor(Date.now()/1000)+120,
@@ -211,9 +221,9 @@ async function executeBuy(chatId, target) {
             highestPriceSeen: tradeValue
         };
         SYSTEM.pendingTarget = null;
-        runProfitMonitor(chatId); // Auto Exit Engaged
+        runProfitMonitor(chatId);
     } else {
-        // Resume scanning if failed
+        // If failed, resume scanning immediately
         if(SYSTEM.autoPilot) runNeuralScanner(chatId);
     }
 }
@@ -248,46 +258,42 @@ async function executeSell(chatId) {
 }
 
 // ==========================================
-//  NEURAL ORACLE (AUTO-FIXED)
+//  NEURAL ORACLE (HYPER-VELOCITY)
 // ==========================================
 
 async function runNeuralScanner(chatId, isManual = false) {
-    // 1. STOP CONDITIONS: 
-    //    - If Auto is OFF and this isn't a manual scan -> STOP.
-    //    - If we have a position -> STOP.
     if ((!SYSTEM.autoPilot && !isManual) || SYSTEM.activePosition || SYSTEM.isLocked || !wallet) return;
 
     try {
-        if(isManual) bot.sendMessage(chatId, "🔎 **SCANNING:** Searching...");
+        if(isManual) bot.sendMessage(chatId, "🔎 **SCANNING:** Searching for signals...");
         
         let potentialTarget = null;
         
-        // --- DATA FETCHING ---
-        if (AI_API_URL) {
-            try {
-                const res = await axios.get(AI_API_URL);
-                potentialTarget = res.data; 
-            } catch(e) {}
-        } else {
-            const res = await axios.get('https://api.dexscreener.com/token-boosts/top/v1').catch(()=>null);
+        // --- SIMULATION LOGIC (REPLACE WITH REAL API IF AVAILABLE) ---
+        // Fast fetch of trending tokens
+        const res = await axios.get('https://api.dexscreener.com/token-boosts/top/v1').catch(()=>null);
+        
+        if (res && res.data && res.data.length > 0) {
+            // Pick random from top 10 to simulate finding "New" signals
+            const raw = res.data[Math.floor(Math.random() * Math.min(10, res.data.length))];
             
-            if (res && res.data && res.data.length > 0) {
-                const raw = res.data[Math.floor(Math.random() * Math.min(10, res.data.length))];
-                if (raw.tokenAddress !== SYSTEM.lastTradedToken) {
-                    const details = await axios.get(`https://api.dexscreener.com/latest/dex/tokens/${raw.tokenAddress}`).catch(()=>null);
-                    if(details && details.data.pairs) {
-                        const pair = details.data.pairs[0];
-                        if (pair) {
-                            potentialTarget = {
-                                name: pair.baseToken.name,
-                                symbol: pair.baseToken.symbol,
-                                tokenAddress: pair.baseToken.address,
-                                price: pair.priceUsd,
-                                sentimentScore: Math.random() * (0.99 - 0.7) + 0.7, 
-                                rsi: Math.floor(Math.random() * 60) + 30, 
-                                socialVolume: Math.floor(Math.random() * 500)
-                            };
-                        }
+            // Duplicate Check
+            if (raw.tokenAddress !== SYSTEM.lastTradedToken) {
+                const details = await axios.get(`https://api.dexscreener.com/latest/dex/tokens/${raw.tokenAddress}`).catch(()=>null);
+                
+                if(details && details.data.pairs) {
+                    const pair = details.data.pairs[0];
+                    if (pair) {
+                        potentialTarget = {
+                            name: pair.baseToken.name,
+                            symbol: pair.baseToken.symbol,
+                            tokenAddress: pair.baseToken.address,
+                            price: pair.priceUsd,
+                            // High confidence simulation for demo purposes
+                            sentimentScore: Math.random() * (0.99 - 0.7) + 0.7, 
+                            rsi: Math.floor(Math.random() * 60) + 30, 
+                            socialVolume: Math.floor(Math.random() * 500)
+                        };
                     }
                 }
             }
@@ -301,10 +307,8 @@ async function runNeuralScanner(chatId, isManual = false) {
 
     } catch (e) {}
     finally {
-        // --- LOOP FIX: Only loop if AutoPilot is active and NO position ---
-        if (SYSTEM.autoPilot && !SYSTEM.activePosition) {
-            setTimeout(() => runNeuralScanner(chatId), 200); // 200ms loop
-        }
+        // INSTANT RE-LOOP: If Auto-Pilot is ON and we didn't buy, scan again in 200ms
+        if (SYSTEM.autoPilot && !SYSTEM.activePosition) setTimeout(() => runNeuralScanner(chatId), 200);
     }
 }
 
@@ -319,15 +323,16 @@ async function processSignal(chatId, data, isManual) {
 
     console.log(`[NEURAL] ${data.symbol}: ${(confidence*100).toFixed(0)}% Conf`.cyan);
 
+    // AUTO MODE: Must meet min confidence
     if (SYSTEM.autoPilot) {
-        // AUTO MODE: EXECUTE INSTANTLY
         if (confidence >= strategy.minConf) {
+            // EXECUTE INSTANTLY - No messaging delay
             await executeBuy(chatId, data); 
         }
-        // NOTE: If confidence is low, the `finally` block in `runNeuralScanner` loops again.
+        // If low confidence, the loop in `runNeuralScanner` will just retry instantly.
     } 
+    // MANUAL MODE: Just show the alert
     else if (isManual) {
-        // MANUAL MODE: ALERT ONLY
         SYSTEM.pendingTarget = data;
         bot.sendMessage(chatId, `
 🧠 **SIGNAL FOUND: ${data.symbol}**
@@ -338,7 +343,7 @@ Action: Type \`/buy ${data.tokenAddress}\` or \`/approve\``);
 }
 
 // ==========================================
-//  PROFIT MONITOR (AUTO-EXIT)
+//  PROFIT MONITOR (PEAK / DECLINE LOGIC)
 // ==========================================
 
 async function runProfitMonitor(chatId) {
@@ -353,8 +358,11 @@ async function runProfitMonitor(chatId) {
         const currentPriceFloat = parseFloat(ethers.formatEther(currentEthValue));
         const highestPriceFloat = parseFloat(ethers.formatEther(highestPriceSeen));
 
+        // 1. UPDATE PEAK
+        let newPeakFound = false;
         if (currentPriceFloat > highestPriceFloat) {
             SYSTEM.activePosition.highestPriceSeen = currentEthValue;
+            newPeakFound = true;
         }
 
         const dropFromPeak = ((highestPriceFloat - currentPriceFloat) / highestPriceFloat) * 100;
@@ -365,14 +373,26 @@ async function runProfitMonitor(chatId) {
 
         process.stdout.write(`\r[MONITOR] ${symbol} PnL: ${totalProfit.toFixed(2)}% | Drop: ${dropFromPeak.toFixed(2)}%   `);
 
-        // ALWAYS AUTO-SELL ON EXIT CONDITIONS (Even for Manual Entry)
-        if (dropFromPeak >= trail && totalProfit > 0.5) {
-            bot.sendMessage(chatId, `📉 **PEAK REVERSAL:** ${symbol} dropped ${dropFromPeak.toFixed(2)}% from top. Auto-Selling.`);
-            await executeSell(chatId);
+        // 2. MANUAL MODE ALERT (Never Auto Sell)
+        if (!SYSTEM.autoPilot) {
+            if (newPeakFound && totalProfit > 1.5) {
+                bot.sendMessage(chatId, `📈 **NEW PEAK:** ${symbol} is UP ${totalProfit.toFixed(2)}%!`);
+            }
+            if (dropFromPeak >= trail && totalProfit > 0) {
+                bot.sendMessage(chatId, `🚨 **PEAK REVERSAL:** ${symbol} dropped ${dropFromPeak.toFixed(2)}% from top. \`/sell\` NOW!`);
+            }
         }
-        else if (totalProfit <= -stopLoss) {
-            bot.sendMessage(chatId, `🛑 **STOP LOSS:** ${symbol} hit -${stopLoss}%. Auto-Selling.`);
-            await executeSell(chatId);
+
+        // 3. AUTO MODE EXECUTION (Auto Sell)
+        if (SYSTEM.autoPilot) {
+            if (dropFromPeak >= trail && totalProfit > 0.5) {
+                bot.sendMessage(chatId, `📉 **AUTO-SELL:** ${symbol} dropped from peak. Securing Profit.`);
+                await executeSell(chatId);
+            }
+            else if (totalProfit <= -stopLoss) {
+                bot.sendMessage(chatId, `🛑 **STOP LOSS:** ${symbol} hit limit. Exiting.`);
+                await executeSell(chatId);
+            }
         }
 
     } catch (e) { }
@@ -401,12 +421,12 @@ bot.onText(/\/connect\s+(.+)/i, async (msg, match) => {
 bot.onText(/\/start/i, (msg) => {
     process.env.CHAT_ID = msg.chat.id;
     bot.sendMessage(msg.chat.id, `
-⚡ **APEX v6000.5 (AUTO-FIX)**
+⚡ **APEX v6000.1**
 \`————————————————————————\`
-**/auto** - Start Auto-Trading
-**/scan** - Manual Search
+**/auto** - Start Loop
+**/scan** - Manual Scan
 **/buy <addr>** - Force Buy
-**/sell** - Panic Sell
+**/sell** - Sell
 **/setamount 5%** - Set Size
 **/status** - View
 \`————————————————————————\``, { parse_mode: "Markdown" });
@@ -435,9 +455,11 @@ bot.onText(/\/buy(?:\s+(.+))?/i, async (msg, match) => {
     const addr = match[1];
     
     if(addr) {
-        bot.sendMessage(msg.chat.id, `🛒 **MANUAL ENTRY:** Buying ${addr}. Auto-Exit engaged.`);
+        // Buy specific address
+        bot.sendMessage(msg.chat.id, `🛒 **BUYING:** ${addr}`);
         await executeBuy(msg.chat.id, { tokenAddress: addr, symbol: "MANUAL", name: "User" });
     } else if (SYSTEM.pendingTarget) {
+        // Buy pending
         bot.sendMessage(msg.chat.id, `👍 **APPROVED:** Buying ${SYSTEM.pendingTarget.symbol}`);
         await executeBuy(msg.chat.id, SYSTEM.pendingTarget);
     } else {
@@ -456,7 +478,7 @@ bot.onText(/\/approve/i, async (msg) => {
 
 bot.onText(/\/sell/i, async (msg) => {
     if (SYSTEM.activePosition) {
-        bot.sendMessage(msg.chat.id, "📉 **PANIC SELL!**");
+        bot.sendMessage(msg.chat.id, "📉 **SELLING NOW...**");
         await executeSell(msg.chat.id);
     } else {
         bot.sendMessage(msg.chat.id, "⚠️ No position.");
@@ -487,4 +509,4 @@ bot.onText(/\/status/i, async (msg) => {
 });
 
 http.createServer((req, res) => res.end("APEX v6000 ONLINE")).listen(8080);
-console.log("APEX SIGNAL v6000.5 ONLINE [AUTO-FIX].".magenta);
+console.log("APEX SIGNAL v6000.1 ONLINE [EXECUTION PATCH].".magenta);
