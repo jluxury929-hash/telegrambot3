@@ -1,10 +1,10 @@
 /**
  * ===============================================================================
- * APEX PREDATOR: NEURAL SIGNAL v10000.3 (UNIVERSAL HYBRID)
+ * APEX PREDATOR: NEURAL SIGNAL v10000.4 (UNIVERSAL VELOCITY)
  * ===============================================================================
+ * ENGINE: Jupiter Ultra (SOL) + Standard EVM (Base/Bsc/Eth/Arb)
+ * SCANNER: Dual-Engine (Boosts + Volume) enabled for ALL CHAINS
  * AUTH: Jupiter API Key Integrated
- * LOGIC: All chains now use Hybrid Scanning (Boosts + Volume Fallback)
- * TARGET: Maximum trade frequency on SOL, BASE, BSC, ETH, ARB
  * ===============================================================================
  */
 
@@ -30,12 +30,12 @@ const NETWORKS = {
         rpc: 'https://rpc.mevblocker.io',
         router: '0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D',
         weth: '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
-        scanQuery: 'WETH' // Search for WETH pairs
+        scanQuery: 'WETH' 
     },
     SOL: {
         id: 'solana', type: 'SVM',
         rpc: 'https://api.mainnet-beta.solana.com',
-        scanQuery: 'SOL' // Search for SOL pairs
+        scanQuery: 'SOL' // Now actively scans SOL volume if boosts fail
     },
     BASE: {
         id: 'base', type: 'EVM',
@@ -49,7 +49,7 @@ const NETWORKS = {
         rpc: 'https://bsc-dataseed.binance.org/',
         router: '0x10ED43C718714eb63d5aA57B78B54704E256024E',
         weth: '0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c',
-        scanQuery: 'WBNB' // Search for WBNB pairs
+        scanQuery: 'WBNB' // Scans WBNB volume
     },
     ARB: {
         id: 'arbitrum', type: 'EVM',
@@ -205,6 +205,8 @@ async function executeEvmSwap(chatId, direction, tokenAddress, amountEth) {
         
         if (direction === 'BUY') {
             const value = ethers.parseEther(amountEth);
+            
+            // GAS SAFETY CHECK
             const balance = await evmProvider.getBalance(evmSigner.address);
             if (balance < value) return bot.sendMessage(chatId, `⚠️ **INSUFFICIENT FUNDS:** Have ${ethers.formatEther(balance)}, Need ${amountEth}`);
 
@@ -275,7 +277,7 @@ function analyzeTarget(pair) {
 }
 
 // ==========================================
-//  OMNI-SCANNER (HYBRID ENGINE)
+//  OMNI-SCANNER (UNIVERSAL HYBRID)
 // ==========================================
 
 async function runNeuralScanner(chatId) {
@@ -285,23 +287,23 @@ async function runNeuralScanner(chatId) {
         const netConfig = NETWORKS[SYSTEM.currentNetwork];
         let targets = [];
 
-        // SOURCE 1: TOKEN BOOSTS (Fastest for Memes)
-        // Works for ALL chains if they have a boost active
+        // --- SOURCE 1: TOKEN BOOSTS (All Chains) ---
+        // Checks hype list first for MAX speed
         try {
             const res = await axios.get('https://api.dexscreener.com/token-boosts/top/v1');
             const boostMatch = res.data.find(t => t.chainId === netConfig.id && t.tokenAddress !== SYSTEM.lastTradedToken);
             if (boostMatch) targets.push(boostMatch.tokenAddress);
         } catch(e) {}
 
-        // SOURCE 2: DEEP SEARCH (Universal Fallback)
-        // If no boost, search for high volume pairs on the specific network
+        // --- SOURCE 2: UNIVERSAL VOLUME FALLBACK ---
+        // If Boosts fail, perform deep volume scan (Now works for SOL, BASE, BSC, ETH, ARB)
         if (targets.length === 0) {
             const query = netConfig.scanQuery; 
             try {
                 // Search for pairs matching the chain's native token (SOL, WETH, WBNB)
                 const searchRes = await axios.get(`https://api.dexscreener.com/latest/dex/search/?q=${query}`);
                 
-                // Filter: Correct Chain, High Volume, Good Liquidity
+                // Filter: Correct Chain, High Volume, Not Stablecoin
                 const movers = searchRes.data.pairs
                     .filter(p => p.chainId === netConfig.id && p.quoteToken.symbol !== 'USDT' && p.volume.h24 > 15000)
                     .sort((a,b) => b.volume.h24 - a.volume.h24);
@@ -312,8 +314,8 @@ async function runNeuralScanner(chatId) {
 
         // PROCESS FOUND TARGET
         if (targets.length > 0) {
-            const address = targets[0];
-            const details = await axios.get(`https://api.dexscreener.com/latest/dex/tokens/${address}`);
+            const bestAddress = targets[0]; 
+            const details = await axios.get(`https://api.dexscreener.com/latest/dex/tokens/${bestAddress}`);
             const pair = details.data.pairs[0];
 
             if (pair) {
@@ -438,7 +440,7 @@ async function runProfitMonitor(chatId) {
 // ==========================================
 bot.onText(/\/start/, (msg) => {
     bot.sendMessage(msg.chat.id, `
-🐲 **APEX PREDATOR v10000.3 (HYBRID)**
+🐲 **APEX PREDATOR v10000.4 (UNIVERSAL VELOCITY)**
 Operator: ${msg.from.first_name} | Class: ${PLAYER.class}
 Current Network: ${SYSTEM.currentNetwork}
 
@@ -476,4 +478,4 @@ Active Trade: ${SYSTEM.activePosition ? SYSTEM.activePosition.symbol : 'None'}
 });
 
 http.createServer((req, res) => res.end("APEX v10000 ONLINE")).listen(8080);
-console.log("APEX v10000 HYBRID ONLINE".green);
+console.log("APEX v10000 UNIVERSAL ONLINE".green);
