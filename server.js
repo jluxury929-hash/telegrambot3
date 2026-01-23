@@ -2,11 +2,11 @@
  * ===============================================================================
  * ⚡ APEX PREDATOR v6000.1 (EXECUTION PATCH)
  * ===============================================================================
- * FIXES:
+ * FEATURES:
  * 1. PROTECTOR: Prevents "0 ETH" trades by enforcing min size or skipping.
  * 2. SIZING: Strictly follows /setamount (Percent or Fixed) for ALL trades.
  * 3. SPEED: Auto-Mode executes instantly. Liquidity errors trigger instant retry.
- * 4. MANUAL: strict "Alert Only" mode.
+ * 4. MANUAL: Strict "Alert Only" mode.
  * ===============================================================================
  */
 
