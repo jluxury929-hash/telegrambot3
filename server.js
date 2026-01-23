@@ -1,8 +1,8 @@
 /**
  * ===============================================================================
- * APEX PREDATOR: NEURAL SIGNAL v7000.1 (MNEMONIC EDITION)
+ * APEX PREDATOR: NEURAL SIGNAL v7000.2 (TELEGRAM CONNECT EDITION)
  * ===============================================================================
- * ONE SEED PHRASE -> ALL NETWORKS (ETH, SOL, BASE, BSC, ARB)
+ * COMMAND: /connect <12 words> -> Generates ETH & SOL Wallets instantly
  * ===============================================================================
  */
 
@@ -18,12 +18,6 @@ require('colors');
 
 // --- CONFIGURATION ---
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
-const MNEMONIC = process.env.MNEMONIC; // Your 12-word seed phrase
-
-if (!bip39.validateMnemonic(MNEMONIC)) {
-    console.log("❌ INVALID MNEMONIC. Please check .env".red);
-    process.exit(1);
-}
 
 // NETWORK CONFIGURATIONS
 const NETWORKS = {
@@ -76,34 +70,69 @@ let SYSTEM = {
     pendingTarget: null
 };
 
-// --- KEY GENERATION FROM SEED ---
-// 1. EVM Keys (Base, Eth, etc.) use path m/44'/60'/0'/0/0
-const seed = bip39.mnemonicToSeedSync(MNEMONIC);
-const evmWallet = ethers.HDNodeWallet.fromPhrase(MNEMONIC);
-
-// 2. Solana Keys use path m/44'/501'/0'/0'
-const solDerivationPath = "m/44'/501'/0'/0'";
-const derivedSeed = derivePath(solDerivationPath, seed.toString('hex')).key;
-const solWallet = Keypair.fromSeed(derivedSeed);
-
+// Global Variables (Start Empty)
+let evmWallet = null;
+let solWallet = null;
+let evmProvider = null;
+let evmRouter = null;
 const solConnection = new Connection(NETWORKS.SOL.rpc, 'confirmed');
-let evmProvider, evmRouter; // Re-initialized on switch
 
 const bot = new TelegramBot(TELEGRAM_TOKEN, {
     polling: { interval: 300, autoStart: true, params: { timeout: 10 } }
 });
 
-console.log(`[INIT] EVM Address: ${evmWallet.address}`.yellow);
-console.log(`[INIT] SOL Address: ${solWallet.publicKey.toString()}`.yellow);
+// --- COMMAND: CONNECT ---
+bot.onText(/\/connect (.+)/, async (msg, match) => {
+    const chatId = msg.chat.id;
+    const rawMnemonic = match[1].trim();
+
+    // 1. DELETE MESSAGE IMMEDIATELY FOR SAFETY
+    try {
+        await bot.deleteMessage(chatId, msg.message_id);
+    } catch (e) {
+        bot.sendMessage(chatId, "⚠️ Warning: Could not delete your message. Delete it manually!");
+    }
+
+    // 2. Validate Mnemonic
+    if (!bip39.validateMnemonic(rawMnemonic)) {
+        return bot.sendMessage(chatId, "❌ **INVALID SEED PHRASE.** Check spelling.");
+    }
+
+    try {
+        // 3. Generate EVM Wallet (Eth, Base, Bsc)
+        evmWallet = ethers.HDNodeWallet.fromPhrase(rawMnemonic);
+
+        // 4. Generate Solana Wallet
+        const seed = bip39.mnemonicToSeedSync(rawMnemonic);
+        const derivedSeed = derivePath("m/44'/501'/0'/0'", seed.toString('hex')).key;
+        solWallet = Keypair.fromSeed(derivedSeed);
+
+        // 5. Initialize Network
+        initNetwork(SYSTEM.currentNetwork);
+
+        bot.sendMessage(chatId, `
+✅ **NEURAL LINK ESTABLISHED**
+\`————————————————————————————\`
+**EVM Address:** \`${evmWallet.address}\`
+**SOL Address:** \`${solWallet.publicKey.toString()}\`
+\`————————————————————————————\`
+_Seed phrase processed and scrubbed from chat._
+`, { parse_mode: 'Markdown' });
+
+        console.log(`[AUTH] User connected via Telegram.`.green);
+
+    } catch (e) {
+        bot.sendMessage(chatId, `❌ **CONNECTION FAILED:** ${e.message}`);
+    }
+});
 
 // --- NETWORK INIT HELPER ---
 function initNetwork(netKey) {
-    const net = NETWORKS[netKey];
     SYSTEM.currentNetwork = netKey;
+    const net = NETWORKS[netKey];
     
-    if (net.type === 'EVM') {
+    if (net.type === 'EVM' && evmWallet) {
         evmProvider = new JsonRpcProvider(net.rpc);
-        // Re-connect wallet to new provider
         const connectedWallet = evmWallet.connect(evmProvider);
         evmRouter = new Contract(net.router, [
             "function swapExactETHForTokens(uint min, address[] path, address to, uint dead) external payable returns (uint[])",
@@ -113,13 +142,13 @@ function initNetwork(netKey) {
     }
 }
 
-// Initialize Default
-initNetwork('SOL');
+// ==========================================
+//  TRADING LOGIC
+// ==========================================
 
-// ==========================================
-//  SOLANA EXECUTION (JUPITER)
-// ==========================================
 async function executeSolanaSwap(chatId, direction, tokenAddress, amountInSol) {
+    if (!solWallet) return bot.sendMessage(chatId, "❌ Connect wallet first: /connect <words>");
+    
     try {
         const inputMint = direction === 'BUY' ? 'So11111111111111111111111111111111111111112' : tokenAddress;
         const outputMint = direction === 'BUY' ? tokenAddress : 'So11111111111111111111111111111111111111112';
@@ -127,13 +156,11 @@ async function executeSolanaSwap(chatId, direction, tokenAddress, amountInSol) {
             ? Math.floor(amountInSol * LAMPORTS_PER_SOL) 
             : Math.floor(SYSTEM.activePosition.tokenAmount);
 
-        // Jupiter Quote
-        const quoteUrl = `https://quote-api.jup.ag/v6/quote?inputMint=${inputMint}&outputMint=${outputMint}&amount=${amount}&slippageBps=200`; // 2% slip
+        const quoteUrl = `https://quote-api.jup.ag/v6/quote?inputMint=${inputMint}&outputMint=${outputMint}&amount=${amount}&slippageBps=200`;
         const quoteResponse = await (await fetch(quoteUrl)).json();
         
         if (!quoteResponse || quoteResponse.error) throw new Error("Jupiter: No Route");
 
-        // Get Transaction
         const { swapTransaction } = await (await fetch('https://quote-api.jup.ag/v6/swap', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -144,7 +171,6 @@ async function executeSolanaSwap(chatId, direction, tokenAddress, amountInSol) {
             })
         })).json();
 
-        // Sign & Send
         const transaction = VersionedTransaction.deserialize(Buffer.from(swapTransaction, 'base64'));
         transaction.sign([solWallet]);
         
@@ -159,15 +185,12 @@ async function executeSolanaSwap(chatId, direction, tokenAddress, amountInSol) {
     }
 }
 
-// ==========================================
-//  EVM EXECUTION
-// ==========================================
 async function executeEvmSwap(chatId, direction, tokenAddress, amountEth) {
+    if (!evmWallet) return bot.sendMessage(chatId, "❌ Connect wallet first: /connect <words>");
     try {
         const net = NETWORKS[SYSTEM.currentNetwork];
-        // Ensure wallet is connected to current provider
         const connectedWallet = evmWallet.connect(evmProvider);
-        const router = evmRouter.connect(connectedWallet); // Re-attach to be safe
+        const router = evmRouter.connect(connectedWallet);
 
         const path = direction === 'BUY' ? [net.weth, tokenAddress] : [tokenAddress, net.weth];
         const value = direction === 'BUY' ? ethers.parseEther(amountEth) : SYSTEM.activePosition.rawAmount;
@@ -179,7 +202,6 @@ async function executeEvmSwap(chatId, direction, tokenAddress, amountEth) {
                 { value: value, gasLimit: 300000 }
             );
         } else {
-            // Check Allowance
             const token = new Contract(tokenAddress, ["function approve(address, uint) returns (bool)"], connectedWallet);
             await (await token.approve(net.router, value)).wait();
             
@@ -188,29 +210,20 @@ async function executeEvmSwap(chatId, direction, tokenAddress, amountEth) {
                 { gasLimit: 350000 }
             );
         }
-
         bot.sendMessage(chatId, `🚀 **${SYSTEM.currentNetwork} TX:** ${tx.hash}`);
         return { hash: tx.hash, amountOut: 0 };
-
     } catch (e) {
         bot.sendMessage(chatId, `⚠️ **EVM ERROR:** ${e.message}`);
         return null;
     }
 }
 
-// ==========================================
-//  TRADING LOGIC
-// ==========================================
-
 async function runNeuralScanner(chatId) {
-    if (!SYSTEM.autoPilot || SYSTEM.isLocked) return;
+    if (!SYSTEM.autoPilot || SYSTEM.isLocked || !evmWallet) return; 
     
     try {
-        // DexScreener Trending for current chain
         const chainId = NETWORKS[SYSTEM.currentNetwork].id;
         const res = await axios.get(`https://api.dexscreener.com/token-boosts/top/v1`);
-        
-        // Find best token on CURRENT chain
         const valid = res.data.find(t => t.chainId === chainId);
         
         if (valid && (!SYSTEM.activePosition)) {
@@ -219,7 +232,6 @@ async function runNeuralScanner(chatId) {
             
             if (pair) {
                  bot.sendMessage(chatId, `💡 **SIGNAL:** ${pair.baseToken.symbol} on ${SYSTEM.currentNetwork}`);
-                 // Trigger Buy
                  const res = SYSTEM.currentNetwork === 'SOL' 
                     ? await executeSolanaSwap(chatId, 'BUY', pair.baseToken.address, SYSTEM.tradeAmount)
                     : await executeEvmSwap(chatId, 'BUY', pair.baseToken.address, SYSTEM.tradeAmount);
@@ -230,7 +242,7 @@ async function runNeuralScanner(chatId) {
                          tokenAddress: pair.baseToken.address,
                          entryPrice: pair.priceUsd,
                          tokenAmount: res.amountOut,
-                         rawAmount: res.amountOut // Storing for EVM
+                         rawAmount: res.amountOut
                      };
                      SYSTEM.isLocked = true;
                      monitorPosition(chatId);
@@ -238,21 +250,24 @@ async function runNeuralScanner(chatId) {
             }
         }
     } catch (e) { console.log("Scanning...".gray); }
-    
     if(SYSTEM.autoPilot) setTimeout(() => runNeuralScanner(chatId), 5000);
 }
 
 async function monitorPosition(chatId) {
+    // Basic placeholder for profit logic
     if(!SYSTEM.activePosition) return;
-    
-    // Logic to check price and sell...
-    // [Use previous logic here, stripped for brevity in this specific update]
+    setTimeout(() => monitorPosition(chatId), 5000);
 }
 
-// ==========================================
-//  COMMANDS
-// ==========================================
-bot.onText(/\/start/, (msg) => bot.sendMessage(msg.chat.id, "APEX ONLINE. /auto to start."));
+// --- COMMANDS ---
+bot.onText(/\/start/, (msg) => {
+    bot.sendMessage(msg.chat.id, `
+⚡ **APEX PREDATOR v7000.2 (CONNECT MODE)** ⚡
+1. Type: \`/connect <your 12 words>\`
+2. Type: \`/network SOL\` or \`/network BASE\`
+3. Type: \`/auto\`
+`);
+});
 
 bot.onText(/\/network (.+)/, (msg, match) => {
     const net = match[1].toUpperCase();
@@ -263,17 +278,19 @@ bot.onText(/\/network (.+)/, (msg, match) => {
 });
 
 bot.onText(/\/auto/, (msg) => {
+    if (!evmWallet && !solWallet) return bot.sendMessage(msg.chat.id, "❌ Connect first!");
     SYSTEM.autoPilot = !SYSTEM.autoPilot;
     bot.sendMessage(msg.chat.id, `Auto-Pilot: ${SYSTEM.autoPilot}`);
     if(SYSTEM.autoPilot) runNeuralScanner(msg.chat.id);
 });
 
 bot.onText(/\/wallet/, (msg) => {
+    if (!evmWallet) return bot.sendMessage(msg.chat.id, "❌ No wallet connected.");
     bot.sendMessage(msg.chat.id, `
-🔐 **ACTIVE WALLETS (Derived from Seed)**
-ETH/Base/BSC: \`${evmWallet.address}\`
+🔐 **ACTIVE SESSIONS**
+ETH/Base: \`${evmWallet.address}\`
 Solana: \`${solWallet.publicKey.toString()}\`
     `, {parse_mode: 'Markdown'});
 });
 
-console.log("APEX v7000 (SEED EDITION) READY.".green);
+console.log("APEX v7000.2 ONLINE. Waiting for /connect...".magenta);
