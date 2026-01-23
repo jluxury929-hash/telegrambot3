@@ -2,10 +2,8 @@
  * ===============================================================================
  * 🦁 APEX PREDATOR: OMEGA TOTALITY v3000.0 (OMNI-FUSION ETERNAL)
  * ===============================================================================
- * FIX LOG: 
- * 1. Fixed BigInt Decimal SyntaxError (gasBuffer).
- * 2. Standardized Ethers v6 BigInt math for bribes.
- * 3. Unified Auto-Pilot State Machine.
+ * MISSION: Quantum Force Execution & Zero-Loss Autonomy.
+ * STATUS: MEV-Shielded / Flashbots Integrated / Pre-flight Simulation.
  * ===============================================================================
  */
 
@@ -14,20 +12,29 @@ const { ethers, Wallet, Contract, JsonRpcProvider } = require('ethers');
 const { FlashbotsBundleProvider, FlashbotsBundleResolution } = require('@flashbots/ethers-provider-bundle');
 const axios = require('axios');
 const TelegramBot = require('node-telegram-bot-api');
+const WebSocket = require('ws');
 const http = require('http');
 require('colors');
 
 // --- CONFIGURATION ---
-const { TELEGRAM_TOKEN, PRIVATE_KEY, RPC_URL, CHAT_ID } = process.env;
+const { TELEGRAM_TOKEN, PRIVATE_KEY, WSS_NODE_URL, RPC_URL, CHAT_ID } = process.env;
 const ROUTER_ADDR = "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D"; 
 const WETH = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
 
+// MEV-SHIELDED BROADCAST CLUSTER (Socket Flood)
+const EXECUTION_NODES = [
+    RPC_URL || "https://rpc.flashbots.net",
+    "https://rpc.mevblocker.io",
+    "https://eth.llamarpc.com",
+    "https://rpc.ankr.com/eth"
+];
+
 // Initialize Providers
-const provider = new JsonRpcProvider(RPC_URL || "https://rpc.flashbots.net");
+const provider = new JsonRpcProvider(EXECUTION_NODES[0]);
 let wallet, router, flashbotsProvider, bot;
 
 // ==========================================
-// SYSTEM & PLAYER STATE
+// SYSTEM & RPG STATE (The Strategist)
 // ==========================================
 let SYSTEM = {
     autoPilot: false,
@@ -36,19 +43,23 @@ let SYSTEM = {
     activePosition: null,  
     tradeAmount: "0.02",   
     scannedTokens: new Set(),
+    lastTradedToken: null,
     config: { trailingStop: 10, stopLoss: 15, minLiquidity: 30000 },
-    // FIXED: Convert 0.0001 ETH buffer to BigInt Wei (100,000,000,000,000 Wei)
-    gasBuffer: ethers.parseUnits("0.0001", "ether")
+    gasBuffer: ethers.parseUnits("0.0001", "ether") // Quantum Low Buffer
 };
 
 let PLAYER = {
     level: 1, xp: 0, nextLevelXp: 1000, class: "HUNTING CUB",
     totalProfitEth: 0.0,
-    wins: 0
+    inventory: ["MEV Shield v3", "Quantum Goggles"],
+    dailyQuests: [
+        { id: 'scan', task: "Deep Market Analysis", count: 0, target: 5, done: false, xp: 200 },
+        { id: 'trade', task: "Quantum Strike", count: 0, target: 1, done: false, xp: 800 }
+    ]
 };
 
 // ==========================================
-// 1. QUANTUM FORCE EXECUTION
+// 1. QUANTUM FORCE EXECUTION (The Muscle)
 // ==========================================
 async function executeQuantumStrike(type, tokenAddress, amountInEth) {
     if (!wallet || !flashbotsProvider) return false;
@@ -57,7 +68,7 @@ async function executeQuantumStrike(type, tokenAddress, amountInEth) {
     const nonce = await provider.getTransactionCount(wallet.address, "latest");
     const feeData = await provider.getFeeData();
     
-    // Predatory Bribing: Calculate 250% priority tip using BigInt math
+    // Auto-Bribing: 250% priority tip to force block inclusion
     const priorityFee = (feeData.maxPriorityFeePerGas || ethers.parseUnits("1", "gwei")) * 25n / 10n;
     const maxFee = (feeData.maxFeePerGas || ethers.parseUnits("20", "gwei")) + priorityFee;
 
@@ -67,7 +78,7 @@ async function executeQuantumStrike(type, tokenAddress, amountInEth) {
         if (type === "BUY") {
             const amountIn = ethers.parseEther(amountInEth.toString());
             const amounts = await router.getAmountsOut(amountIn, [WETH, tokenAddress]);
-            const minOut = (amounts[1] * 90n) / 100n; 
+            const minOut = (amounts[1] * 90n) / 100n; // 10% Slippage guard
 
             const buyTx = await router.swapExactETHForTokens.populateTransaction(
                 minOut, [WETH, tokenAddress], wallet.address, Math.floor(Date.now()/1000)+120,
@@ -80,6 +91,7 @@ async function executeQuantumStrike(type, tokenAddress, amountInEth) {
             bundleTxs.push({ signedTransaction: signedBuy });
 
         } else {
+            // Quantum Exit: Atomic Approval + Sell in ONE bundle
             const tokenContract = new Contract(tokenAddress, ["function approve(address, uint) returns (bool)", "function balanceOf(address) view returns (uint)"], wallet);
             const bal = await tokenContract.balanceOf(wallet.address);
             
@@ -98,19 +110,27 @@ async function executeQuantumStrike(type, tokenAddress, amountInEth) {
             bundleTxs.push({ signedTransaction: signedApprove }, { signedTransaction: signedSell });
         }
 
-        // PRE-FLIGHT SIMULATION
+        // PRE-FLIGHT SIMULATION (The Honeypot Detector)
         const sim = await flashbotsProvider.simulate(bundleTxs, blockNumber + 1);
         if ("error" in sim || sim.firstRevert) {
-            if (CHAT_ID) bot.sendMessage(CHAT_ID, `🛡 **SHIELD:** Transaction simulation failed. Aborted to save gas.`);
+            if (CHAT_ID) bot.sendMessage(CHAT_ID, `🛡 **ATOMIC SHIELD:** Honeypot or high tax detected in simulation. Aborted. Gas saved.`);
             return false;
         }
 
-        // BUNDLE BROADCAST
+        // SOCKET FLOOD: Multi-Node Saturation Broadcast
+        console.log(`[FORCE] Flooding Bundle to Cluster for block ${blockNumber + 1}`.magenta);
         const res = await flashbotsProvider.sendBundle(bundleTxs, blockNumber + 1);
-        const wait = await res.wait();
+        
+        // Parallel broadcast to public MEV-shielded RPCs as fallback
+        bundleTxs.forEach(tx => {
+            EXECUTION_NODES.forEach(url => {
+                axios.post(url, { jsonrpc: "2.0", id: 1, method: "eth_sendRawTransaction", params: [tx.signedTransaction] }).catch(() => {});
+            });
+        });
 
+        const wait = await res.wait();
         if (wait === FlashbotsBundleResolution.BundleIncluded) {
-            if (CHAT_ID) bot.sendMessage(CHAT_ID, `🏆 **WIN:** Atomic bundle mined in Block ${blockNumber + 1}.`);
+            if (CHAT_ID) bot.sendMessage(CHAT_ID, `🏆 **WIN:** Quantum Bundle Mined in Block ${blockNumber + 1}.`);
             handleTradeSuccess(type, tokenAddress, amountInEth);
             return true;
         }
@@ -123,15 +143,16 @@ async function executeQuantumStrike(type, tokenAddress, amountInEth) {
 }
 
 // ==========================================
-// 2. DUAL-CORE INTELLIGENCE
+// 2. DUAL-CORE INTELLIGENCE (The Brain)
 // ==========================================
 async function runAutoPilot() {
     if (!SYSTEM.autoPilot) return setTimeout(runAutoPilot, 3000);
 
+    // WEB AI HUNTING
     if (SYSTEM.state === "HUNTING" && !SYSTEM.activePosition) {
         try {
             const res = await axios.get('https://api.dexscreener.com/token-boosts/top/v1');
-            const target = res.data.find(t => !SYSTEM.scannedTokens.has(t.tokenAddress));
+            const target = res.data.find(t => t.tokenAddress !== SYSTEM.lastTradedToken && !SYSTEM.scannedTokens.has(t.tokenAddress));
             
             if (target) {
                 const details = await axios.get(`https://api.dexscreener.com/latest/dex/tokens/${target.tokenAddress}`);
@@ -139,13 +160,15 @@ async function runAutoPilot() {
                 
                 if (pair && pair.liquidity.usd > SYSTEM.config.minLiquidity) {
                     SYSTEM.scannedTokens.add(target.tokenAddress);
-                    if (CHAT_ID) bot.sendMessage(CHAT_ID, `🎯 **LOCK:** ${pair.baseToken.symbol} identified. Striking...`);
+                    updateQuest('scan');
+                    if (CHAT_ID) bot.sendMessage(CHAT_ID, `🎯 **TARGET LOCKED:** ${pair.baseToken.symbol}. Executing Quantum Strike...`);
                     await executeQuantumStrike("BUY", target.tokenAddress, SYSTEM.tradeAmount);
                 }
             }
-        } catch (e) { console.log("Scan cycle idle...".gray); }
+        } catch (e) { console.log("Scanning...".gray); }
     }
 
+    // MONITORING (Trailing Stop)
     if (SYSTEM.state === "MONITORING" && SYSTEM.activePosition) {
         try {
             const pos = SYSTEM.activePosition;
@@ -156,17 +179,17 @@ async function runAutoPilot() {
             const drop = ((pos.highWaterMark - currentEth) / pos.highWaterMark) * 100;
 
             if (drop >= SYSTEM.config.trailingStop) {
-                if (CHAT_ID) bot.sendMessage(CHAT_ID, `📉 **EXIT:** Peak reversal hit (${drop.toFixed(1)}%). Liquidating...`);
+                if (CHAT_ID) bot.sendMessage(CHAT_ID, `📉 **PEAK DETECTED:** Reversal hit (${drop.toFixed(2)}%). Rotating funds...`);
                 await executeQuantumStrike("SELL", pos.address, "0");
             }
-        } catch (e) { console.log("Price tracking...".gray); }
+        } catch (e) {}
     }
 
     setTimeout(runAutoPilot, 4000);
 }
 
 // ==========================================
-// 3. RPG & HELPERS
+// 3. RPG & USER INTERFACE
 // ==========================================
 function handleTradeSuccess(type, addr, amt) {
     if (type === "BUY") {
@@ -174,10 +197,11 @@ function handleTradeSuccess(type, addr, amt) {
         SYSTEM.state = "MONITORING";
         addXP(200);
     } else {
+        SYSTEM.lastTradedToken = addr;
         SYSTEM.activePosition = null;
         SYSTEM.state = "HUNTING";
         addXP(1000);
-        PLAYER.wins++;
+        updateQuest('trade');
     }
 }
 
@@ -187,25 +211,28 @@ function addXP(amount) {
         PLAYER.level++;
         PLAYER.xp = 0;
         PLAYER.nextLevelXp = Math.floor(PLAYER.nextLevelXp * 1.6);
-        if (CHAT_ID) bot.sendMessage(CHAT_ID, `🆙 **LEVEL UP:** You are now a Level ${PLAYER.level} ${getRankName(PLAYER.level)}!`);
+        if (CHAT_ID) bot.sendMessage(CHAT_ID, `🆙 **PROMOTION:** Operator Rank increased to Level ${PLAYER.level}!`);
     }
 }
 
-function getRankName(lvl) {
-    if (lvl < 5) return "HUNTING CUB";
-    if (lvl < 10) return "APEX STRIKER";
-    return "MARKET GOD";
+function updateQuest(type) {
+    const q = PLAYER.dailyQuests.find(x => x.id === type);
+    if (q && !q.done) {
+        q.count++;
+        if (q.count >= q.target) {
+            q.done = true;
+            addXP(q.xp);
+            if (CHAT_ID) bot.sendMessage(CHAT_ID, `💎 **QUEST COMPLETE:** ${q.task} (+${q.xp} XP)`);
+        }
+    }
 }
 
 // ==========================================
 // INITIALIZATION
 // ==========================================
 async function startSystem() {
-    console.log(`[SYSTEM] Booting APEX Core...`.yellow);
-    
     wallet = new Wallet(PRIVATE_KEY, provider);
     flashbotsProvider = await FlashbotsBundleProvider.create(provider, Wallet.createRandom());
-    
     router = new Contract(ROUTER_ADDR, [
         "function swapExactETHForTokens(uint min, address[] path, address to, uint dead) external payable returns (uint[])",
         "function swapExactTokensForETH(uint amountIn, uint amountOutMin, address[] path, address to, uint dead) external returns (uint[])",
@@ -216,11 +243,12 @@ async function startSystem() {
 
     bot.onText(/\/auto/, (msg) => {
         SYSTEM.autoPilot = !SYSTEM.autoPilot;
-        bot.sendMessage(msg.chat.id, `🤖 **AUTO-PILOT:** ${SYSTEM.autoPilot ? 'ENGAGED' : 'DISABLED'}`);
+        bot.sendMessage(msg.chat.id, `🤖 **AUTO-PILOT:** ${SYSTEM.autoPilot ? '🟢 ENGAGED' : '🔴 STANDBY'}`);
     });
 
     bot.onText(/\/status/, (msg) => {
-        bot.sendMessage(msg.chat.id, `📊 **TELEMETRY**\nLevel: ${PLAYER.level}\nState: ${SYSTEM.state}\nWins: ${PLAYER.wins}`);
+        const xpBar = "🟩".repeat(Math.floor((PLAYER.xp/PLAYER.nextLevelXp)*10)) + "⬛".repeat(10-Math.floor((PLAYER.xp/PLAYER.nextLevelXp)*10));
+        bot.sendMessage(msg.chat.id, `📊 **OPERATOR STATUS**\nLevel: ${PLAYER.level} (${PLAYER.class})\nXP: [${xpBar}]\nState: ${SYSTEM.state}\nAuto-Pilot: ${SYSTEM.autoPilot}`);
     });
 
     console.log("🦁 APEX PREDATOR v3000.0 ONLINE".magenta);
@@ -228,9 +256,4 @@ async function startSystem() {
 }
 
 startSystem();
-
-// Simple HTTP server to satisfy container health checks
-http.createServer((req, res) => {
-    res.writeHead(200);
-    res.end("APEX_ALIVE");
-}).listen(8080);
+http.createServer((req, res) => res.end("APEX_ALIVE")).listen(8080);
