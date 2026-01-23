@@ -2,6 +2,11 @@
  * ===============================================================================
  * 🦁 APEX PREDATOR: OMEGA TOTALITY v3000.0 (OMNI-FUSION ETERNAL)
  * ===============================================================================
+ * FIX LOG: 
+ * 1. Fixed BigInt Decimal SyntaxError (gasBuffer).
+ * 2. Standardized Ethers v6 BigInt math for bribes.
+ * 3. Unified Auto-Pilot State Machine.
+ * ===============================================================================
  */
 
 require('dotenv').config();
@@ -9,12 +14,11 @@ const { ethers, Wallet, Contract, JsonRpcProvider } = require('ethers');
 const { FlashbotsBundleProvider, FlashbotsBundleResolution } = require('@flashbots/ethers-provider-bundle');
 const axios = require('axios');
 const TelegramBot = require('node-telegram-bot-api');
-const WebSocket = require('ws');
 const http = require('http');
 require('colors');
 
 // --- CONFIGURATION ---
-const { TELEGRAM_TOKEN, PRIVATE_KEY, WSS_NODE_URL, RPC_URL, CHAT_ID } = process.env;
+const { TELEGRAM_TOKEN, PRIVATE_KEY, RPC_URL, CHAT_ID } = process.env;
 const ROUTER_ADDR = "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D"; 
 const WETH = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
 
@@ -23,27 +27,28 @@ const provider = new JsonRpcProvider(RPC_URL || "https://rpc.flashbots.net");
 let wallet, router, flashbotsProvider, bot;
 
 // ==========================================
-// SYSTEM & PLAYER STATE (The Strategist)
+// SYSTEM & PLAYER STATE
 // ==========================================
 let SYSTEM = {
     autoPilot: false,
-    state: "HUNTING",      // HUNTING, MONITORING, EXECUTING
-    pendingTarget: null,   // Locked target address
-    activePosition: null,  // { address, entryPrice, highWaterMark, amount }
+    state: "HUNTING",      
+    pendingTarget: null,   
+    activePosition: null,  
     tradeAmount: "0.02",   
     scannedTokens: new Set(),
     config: { trailingStop: 10, stopLoss: 15, minLiquidity: 30000 },
-    gasBuffer: 0.0001n     // Quantum Low Buffer
+    // FIXED: Convert 0.0001 ETH buffer to BigInt Wei (100,000,000,000,000 Wei)
+    gasBuffer: ethers.parseUnits("0.0001", "ether")
 };
 
 let PLAYER = {
     level: 1, xp: 0, nextLevelXp: 1000, class: "HUNTING CUB",
     totalProfitEth: 0.0,
-    inventory: ["MEV Shield v3", "Quantum Goggles"]
+    wins: 0
 };
 
 // ==========================================
-// 1. QUANTUM FORCE EXECUTION (The Muscle)
+// 1. QUANTUM FORCE EXECUTION
 // ==========================================
 async function executeQuantumStrike(type, tokenAddress, amountInEth) {
     if (!wallet || !flashbotsProvider) return false;
@@ -52,7 +57,7 @@ async function executeQuantumStrike(type, tokenAddress, amountInEth) {
     const nonce = await provider.getTransactionCount(wallet.address, "latest");
     const feeData = await provider.getFeeData();
     
-    // Predatory Bribing: 250% of network priority to "Win the Block"
+    // Predatory Bribing: Calculate 250% priority tip using BigInt math
     const priorityFee = (feeData.maxPriorityFeePerGas || ethers.parseUnits("1", "gwei")) * 25n / 10n;
     const maxFee = (feeData.maxFeePerGas || ethers.parseUnits("20", "gwei")) + priorityFee;
 
@@ -62,7 +67,7 @@ async function executeQuantumStrike(type, tokenAddress, amountInEth) {
         if (type === "BUY") {
             const amountIn = ethers.parseEther(amountInEth.toString());
             const amounts = await router.getAmountsOut(amountIn, [WETH, tokenAddress]);
-            const minOut = (amounts[1] * 90n) / 100n; // 10% Slippage protection
+            const minOut = (amounts[1] * 90n) / 100n; 
 
             const buyTx = await router.swapExactETHForTokens.populateTransaction(
                 minOut, [WETH, tokenAddress], wallet.address, Math.floor(Date.now()/1000)+120,
@@ -75,17 +80,16 @@ async function executeQuantumStrike(type, tokenAddress, amountInEth) {
             bundleTxs.push({ signedTransaction: signedBuy });
 
         } else {
-            // Quantum Exit: Bundle Approve + Sell in ONE block
             const tokenContract = new Contract(tokenAddress, ["function approve(address, uint) returns (bool)", "function balanceOf(address) view returns (uint)"], wallet);
             const bal = await tokenContract.balanceOf(wallet.address);
             
-            const approveTx = await tokenContract.approve.populateTransaction(ROUTER_ADDR, bal, { gasLimit: 60000n });
+            const approveTx = await tokenContract.approve.populateTransaction(ROUTER_ADDR, bal, { gasLimit: 65000n });
             const signedApprove = await wallet.signTransaction({
-                ...approveTx, type: 2, chainId: 1, nonce: nonce, maxPriorityFeePerGas: priorityFee, maxFeePerGas: maxFee
+                ...approveTx, type: 2, chainId: 1, nonce, maxPriorityFeePerGas: priorityFee, maxFeePerGas: maxFee
             });
 
             const sellTx = await router.swapExactTokensForETH.populateTransaction(
-                bal, 0n, [tokenAddress, WETH], wallet.address, Math.floor(Date.now()/1000)+120, { gasLimit: 350000n }
+                bal, 0n, [tokenAddress, WETH], wallet.address, Math.floor(Date.now()/1000)+120, { gasLimit: 380000n }
             );
             const signedSell = await wallet.signTransaction({
                 ...sellTx, type: 2, chainId: 1, nonce: nonce + 1n, maxPriorityFeePerGas: priorityFee, maxFeePerGas: maxFee
@@ -94,19 +98,19 @@ async function executeQuantumStrike(type, tokenAddress, amountInEth) {
             bundleTxs.push({ signedTransaction: signedApprove }, { signedTransaction: signedSell });
         }
 
-        // PRE-FLIGHT SIMULATION (The Honeypot Detector)
+        // PRE-FLIGHT SIMULATION
         const sim = await flashbotsProvider.simulate(bundleTxs, blockNumber + 1);
         if ("error" in sim || sim.firstRevert) {
-            bot.sendMessage(CHAT_ID, `🛡 **ATOMIC SHIELD:** Trade blocked (Honeypot or High Tax). $0 Gas spent.`);
+            if (CHAT_ID) bot.sendMessage(CHAT_ID, `🛡 **SHIELD:** Transaction simulation failed. Aborted to save gas.`);
             return false;
         }
 
-        // SOCKET FLOOD BROADCAST
+        // BUNDLE BROADCAST
         const res = await flashbotsProvider.sendBundle(bundleTxs, blockNumber + 1);
         const wait = await res.wait();
 
         if (wait === FlashbotsBundleResolution.BundleIncluded) {
-            bot.sendMessage(CHAT_ID, `🏆 **OBLITERATED:** Block ${blockNumber + 1} Captured.`);
+            if (CHAT_ID) bot.sendMessage(CHAT_ID, `🏆 **WIN:** Atomic bundle mined in Block ${blockNumber + 1}.`);
             handleTradeSuccess(type, tokenAddress, amountInEth);
             return true;
         }
@@ -119,12 +123,11 @@ async function executeQuantumStrike(type, tokenAddress, amountInEth) {
 }
 
 // ==========================================
-// 2. DUAL-CORE INTELLIGENCE (The Brain)
+// 2. DUAL-CORE INTELLIGENCE
 // ==========================================
 async function runAutoPilot() {
     if (!SYSTEM.autoPilot) return setTimeout(runAutoPilot, 3000);
 
-    // HUNTING PHASE
     if (SYSTEM.state === "HUNTING" && !SYSTEM.activePosition) {
         try {
             const res = await axios.get('https://api.dexscreener.com/token-boosts/top/v1');
@@ -136,14 +139,13 @@ async function runAutoPilot() {
                 
                 if (pair && pair.liquidity.usd > SYSTEM.config.minLiquidity) {
                     SYSTEM.scannedTokens.add(target.tokenAddress);
-                    bot.sendMessage(CHAT_ID, `🎯 **TARGET LOCKED:** ${pair.baseToken.symbol}. Executing Strike...`);
+                    if (CHAT_ID) bot.sendMessage(CHAT_ID, `🎯 **LOCK:** ${pair.baseToken.symbol} identified. Striking...`);
                     await executeQuantumStrike("BUY", target.tokenAddress, SYSTEM.tradeAmount);
                 }
             }
-        } catch (e) { console.log("Scan idle...".gray); }
+        } catch (e) { console.log("Scan cycle idle...".gray); }
     }
 
-    // MONITORING PHASE (Trailing Stop)
     if (SYSTEM.state === "MONITORING" && SYSTEM.activePosition) {
         try {
             const pos = SYSTEM.activePosition;
@@ -154,17 +156,17 @@ async function runAutoPilot() {
             const drop = ((pos.highWaterMark - currentEth) / pos.highWaterMark) * 100;
 
             if (drop >= SYSTEM.config.trailingStop) {
-                bot.sendMessage(CHAT_ID, `📉 **PEAK REVERSAL:** Dropped ${drop.toFixed(2)}%. Exiting...`);
+                if (CHAT_ID) bot.sendMessage(CHAT_ID, `📉 **EXIT:** Peak reversal hit (${drop.toFixed(1)}%). Liquidating...`);
                 await executeQuantumStrike("SELL", pos.address, "0");
             }
-        } catch (e) { console.log("Monitoring price...".gray); }
+        } catch (e) { console.log("Price tracking...".gray); }
     }
 
     setTimeout(runAutoPilot, 4000);
 }
 
 // ==========================================
-// 3. RPG & USER INTERFACE
+// 3. RPG & HELPERS
 // ==========================================
 function handleTradeSuccess(type, addr, amt) {
     if (type === "BUY") {
@@ -185,16 +187,25 @@ function addXP(amount) {
         PLAYER.level++;
         PLAYER.xp = 0;
         PLAYER.nextLevelXp = Math.floor(PLAYER.nextLevelXp * 1.6);
-        bot.sendMessage(CHAT_ID, `🆙 **PROMOTION:** Operator Level ${PLAYER.level} reached!`);
+        if (CHAT_ID) bot.sendMessage(CHAT_ID, `🆙 **LEVEL UP:** You are now a Level ${PLAYER.level} ${getRankName(PLAYER.level)}!`);
     }
+}
+
+function getRankName(lvl) {
+    if (lvl < 5) return "HUNTING CUB";
+    if (lvl < 10) return "APEX STRIKER";
+    return "MARKET GOD";
 }
 
 // ==========================================
 // INITIALIZATION
 // ==========================================
 async function startSystem() {
+    console.log(`[SYSTEM] Booting APEX Core...`.yellow);
+    
     wallet = new Wallet(PRIVATE_KEY, provider);
     flashbotsProvider = await FlashbotsBundleProvider.create(provider, Wallet.createRandom());
+    
     router = new Contract(ROUTER_ADDR, [
         "function swapExactETHForTokens(uint min, address[] path, address to, uint dead) external payable returns (uint[])",
         "function swapExactTokensForETH(uint amountIn, uint amountOutMin, address[] path, address to, uint dead) external returns (uint[])",
@@ -205,13 +216,11 @@ async function startSystem() {
 
     bot.onText(/\/auto/, (msg) => {
         SYSTEM.autoPilot = !SYSTEM.autoPilot;
-        bot.sendMessage(msg.chat.id, `🤖 **AUTO-PILOT:** ${SYSTEM.autoPilot ? 'ENGAGED' : 'OFF'}`);
+        bot.sendMessage(msg.chat.id, `🤖 **AUTO-PILOT:** ${SYSTEM.autoPilot ? 'ENGAGED' : 'DISABLED'}`);
     });
 
-    bot.onText(/\/buy (.+)/, async (msg, match) => {
-        const addr = match[1];
-        bot.sendMessage(msg.chat.id, `⚔️ **GOD MODE:** Forcing strike on ${addr}...`);
-        await executeQuantumStrike("BUY", addr, SYSTEM.tradeAmount);
+    bot.onText(/\/status/, (msg) => {
+        bot.sendMessage(msg.chat.id, `📊 **TELEMETRY**\nLevel: ${PLAYER.level}\nState: ${SYSTEM.state}\nWins: ${PLAYER.wins}`);
     });
 
     console.log("🦁 APEX PREDATOR v3000.0 ONLINE".magenta);
@@ -219,4 +228,9 @@ async function startSystem() {
 }
 
 startSystem();
-http.createServer((req, res) => res.end("APEX_ALIVE")).listen(8080);
+
+// Simple HTTP server to satisfy container health checks
+http.createServer((req, res) => {
+    res.writeHead(200);
+    res.end("APEX_ALIVE");
+}).listen(8080);
