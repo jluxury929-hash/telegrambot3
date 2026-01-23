@@ -103,7 +103,7 @@ async function getSafeTradeAmount(chatId) {
         
         // 1. Gas Protector: Ensure we have at least 0.015 ETH total
         if (balance < ethers.parseEther("0.015")) {
-            bot.sendMessage(chatId, `⚠️ **CRITICAL:** Wallet Empty or < 0.015 ETH.`);
+            bot.sendMessage(chatId, `⚠️ **CRITICAL:** Wallet Empty or < 0.00015 ETH.`);
             return 0n;
         }
 
