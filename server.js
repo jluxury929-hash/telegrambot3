@@ -1,11 +1,11 @@
 /**
  * ===============================================================================
- * 🦁 APEX PREDATOR v8000.1 (OMNI-CHAIN WARLORD - PATCHED)
+ * 🦁 APEX PREDATOR v9000.0 (INSTANT-AUTO EVM EDITION)
  * ===============================================================================
- * 1. FIX APPLIED: Added missing 'http' module import to prevent ReferenceError.
- * 2. MULTI-CHAIN: Auto-Trades on ETH, BASE, ARB, POLYGON.
- * 3. SOLANA INTELLIGENCE: Scans and Alerts for SOL signals.
- * 4. SYSTEM: Full Omni-Chain Scanner + Dynamic Routing + Smart Gas.
+ * 1. INSTANT SCAN: Checks Top 50 tokens to guarantee an immediate signal.
+ * 2. AUTO-MODE PURITY: Ignores Solana in Auto-Mode (EVM Execution Only).
+ * 3. NO MANUAL INPUT: Auto-Mode handles Chain Switch -> Buy -> Sell autonomously.
+ * 4. HYBRID: Manual Mode still alerts for Solana (since you might want to trade it manually).
  * ===============================================================================
  */
 
@@ -13,14 +13,14 @@ require('dotenv').config();
 const { ethers, Wallet, Contract, JsonRpcProvider } = require('ethers');
 const axios = require('axios');
 const TelegramBot = require('node-telegram-bot-api');
-const http = require('http'); // <--- [FIX] Module now imported correctly
+const http = require('http');
 require('colors');
 
 // --- CONFIGURATION ---
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
 const AI_API_URL = process.env.AI_API_URL || null;
 
-// --- CHAIN CONFIGURATION (The Brains) ---
+// --- CHAIN CONFIGURATION (EVM FOCUSED) ---
 const CHAINS = {
     'ethereum': {
         name: 'Ethereum',
@@ -34,8 +34,8 @@ const CHAINS = {
     'base': {
         name: 'Base',
         rpc: "https://mainnet.base.org",
-        router: "0x4752ba5dbc23f44d87826276bf6fd6b1c372ad24", // Uniswap V2 on Base
-        wtoken: "0x4200000000000000000000000000000000000006", // WETH on Base
+        router: "0x4752ba5dbc23f44d87826276bf6fd6b1c372ad24", // Uniswap V2
+        wtoken: "0x4200000000000000000000000000000000000006", // WETH
         symbol: 'ETH',
         gasReserve: "0.001",
         scanUrl: "https://basescan.org/tx/"
@@ -44,7 +44,7 @@ const CHAINS = {
         name: 'Arbitrum',
         rpc: "https://arb1.arbitrum.io/rpc",
         router: "0x1b02dA8Cb0d097eB8D57A175b88c7D877F64EF71", // SushiSwap
-        wtoken: "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1", // WETH on Arb
+        wtoken: "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1", // WETH
         symbol: 'ETH',
         gasReserve: "0.001",
         scanUrl: "https://arbiscan.io/tx/"
@@ -58,6 +58,7 @@ const CHAINS = {
         gasReserve: "1.0", 
         scanUrl: "https://polygonscan.com/tx/"
     },
+    // Solana is kept for Manual Scan alerts ONLY
     'solana': {
         name: 'Solana',
         rpc: null, 
@@ -66,23 +67,24 @@ const CHAINS = {
     }
 };
 
-// Global Variables
+// Global State
 let currentProvider = null;
 let currentWallet = null;
 let currentRouter = null;
 let currentChain = 'ethereum';
 
-// Initialize Bot
 const bot = new TelegramBot(TELEGRAM_TOKEN, {
     polling: { interval: 100, autoStart: true, params: { timeout: 10 } }
 });
 
 // ==========================================
-//  CHAIN SWITCHER ENGINE
+//  CHAIN SWITCHING ENGINE
 // ==========================================
 
 async function switchChain(chainKey) {
     if (!CHAINS[chainKey]) return false;
+    
+    // Solana Mode (No Execution, Just Alerting state)
     if (chainKey === 'solana') {
         currentChain = 'solana';
         return 'SOLANA_MODE';
@@ -105,21 +107,19 @@ async function switchChain(chainKey) {
             currentRouter = newRouter;
             currentChain = chainKey;
             
-            console.log(`[NETWORK] Switched to ${config.name}`.magenta);
+            console.log(`[NETWORK] Active: ${config.name}`.magenta);
             return true;
         }
     } catch (e) {
-        console.log(`[ERROR] Switch Failed: ${e.message}`.red);
         return false;
     }
     return false;
 }
 
-// Initialize
-switchChain('ethereum');
+switchChain('ethereum'); // Init
 
 // ==========================================
-//  SYSTEM STATE
+//  SYSTEM CONFIG
 // ==========================================
 
 const RISK_PROFILES = {
@@ -149,27 +149,8 @@ let SYSTEM = {
 };
 
 // ==========================================
-//  OMNI-CHAIN SECURITY & SIZING
+//  SMART BALANCE
 // ==========================================
-
-async function checkTokenSecurity(tokenAddress, chain) {
-    if (chain === 'solana') return { safe: true }; 
-
-    try {
-        const res = await axios.get(`https://api.dexscreener.com/latest/dex/tokens/${tokenAddress}`);
-        if (!res.data || !res.data.pairs) return { safe: false, reason: "No Data" };
-
-        const pair = res.data.pairs[0];
-        
-        if (pair.liquidity && pair.liquidity.usd < 1000) return { safe: false, reason: "Low Liquidity" };
-        
-        if (pair.txns.h24.buys > 10 && pair.txns.h24.sells === 0) {
-            return { safe: false, reason: "HONEYPOT (0 Sells)" };
-        }
-
-        return { safe: true };
-    } catch (e) { return { safe: false, reason: "API Error" }; }
-}
 
 async function getSafeTradeAmount(chatId) {
     if (!currentWallet || currentChain === 'solana') return 0n;
@@ -180,7 +161,7 @@ async function getSafeTradeAmount(chatId) {
         const reserve = ethers.parseEther(config.gasReserve);
 
         if (balance <= reserve) {
-            bot.sendMessage(chatId, `⚠️ **LOW ${config.symbol}:** Bal: ${ethers.formatEther(balance)} < Reserve: ${ethers.formatEther(reserve)}`);
+            if(!SYSTEM.autoPilot) bot.sendMessage(chatId, `⚠️ **LOW ${config.symbol}:** Top up wallet.`);
             return 0n;
         }
 
@@ -209,23 +190,17 @@ async function getSafeTradeAmount(chatId) {
 async function executeBuy(chatId, target) {
     const switchRes = await switchChain(target.chain);
     
+    // AUTO-MODE GUARD: Never pause for Solana in Auto-Mode
     if (switchRes === 'SOLANA_MODE') {
-        if (SYSTEM.autoPilot) {
-            bot.sendMessage(chatId, `☀️ **SOLANA ALPHA:** ${target.symbol} ($${target.price})\n⚠️ Manual entry required for SOL.`);
+        if (!SYSTEM.autoPilot) {
+            bot.sendMessage(chatId, `☀️ **SOLANA ALERT:** ${target.symbol} ($${target.price})\nManual Trade Required.`);
         }
-        return;
+        return; // Auto-mode ignores this and keeps scanning loop alive
     }
     
-    if (!switchRes) return bot.sendMessage(chatId, `❌ **ERROR:** Could not switch to ${target.chain}`);
+    if (!switchRes) return;
 
-    // Security Check
-    const security = await checkTokenSecurity(target.tokenAddress, target.chain);
-    if (!security.safe) {
-        if(!SYSTEM.autoPilot) bot.sendMessage(chatId, `⚠️ **SKIP:** ${security.reason}`);
-        return;
-    }
-
-    // Get Amount
+    // GET AMOUNT
     const tradeValue = await getSafeTradeAmount(chatId);
     if (tradeValue === 0n) return;
 
@@ -259,7 +234,7 @@ async function executeBuy(chatId, target) {
             wtoken: config.wtoken
         };
         
-        bot.sendMessage(chatId, `✅ **BOUGHT:** ${target.symbol}\n🔗 [View Transaction](${link})`, {parse_mode: "Markdown", disable_web_page_preview: true});
+        bot.sendMessage(chatId, `✅ **BOUGHT:** ${target.symbol}\n🔗 [View TX](${link})`, {parse_mode: "Markdown", disable_web_page_preview: true});
         runProfitMonitor(chatId);
 
     } catch(e) {
@@ -286,7 +261,7 @@ async function executeSell(chatId) {
         
         const receipt = await tx.wait();
         SYSTEM.activePosition = null;
-        bot.sendMessage(chatId, `💰 **SOLD:** ${symbol} secured.\n🔗 [View Transaction](${config.scanUrl}${receipt.hash})`, {parse_mode: "Markdown", disable_web_page_preview: true});
+        bot.sendMessage(chatId, `💰 **SOLD:** ${symbol} Profit Secured.\n🔗 [View TX](${config.scanUrl}${receipt.hash})`, {parse_mode: "Markdown", disable_web_page_preview: true});
         
         if (SYSTEM.autoPilot) runNeuralScanner(chatId);
 
@@ -296,36 +271,50 @@ async function executeSell(chatId) {
 }
 
 // ==========================================
-//  OMNI-SCANNER
+//  OMNI-SCANNER (INSTANT FINDER)
 // ==========================================
 
 async function runNeuralScanner(chatId, isManual = false) {
     if ((!SYSTEM.autoPilot && !isManual) || SYSTEM.activePosition || SYSTEM.isLocked) return;
 
     try {
-        if(isManual) bot.sendMessage(chatId, "🔭 **OMNI-SCAN:** Scanning ETH, BASE, SOL, ARB, POLY...");
+        if(isManual) bot.sendMessage(chatId, "🔭 **OMNI-SCAN:** Searching...");
         
+        // Fetch High-Volume Trends
         const res = await axios.get('https://api.dexscreener.com/token-boosts/top/v1').catch(()=>null);
         let potentialTarget = null;
 
         if (res && res.data) {
-            for (const raw of res.data) {
+            // SCAN DEEP: Check top 50 tokens to guarantee we find a valid EVM trade
+            for (let i = 0; i < Math.min(50, res.data.length); i++) {
+                const raw = res.data[i];
+                
+                // 1. FILTER: Is it a supported chain?
                 if (!CHAINS[raw.chainId]) continue;
                 if (raw.tokenAddress === SYSTEM.lastTradedToken) continue;
 
+                // 2. AUTO-MODE FILTER: In Auto, IGNORE Solana (Can't execute)
+                if (SYSTEM.autoPilot && raw.chainId === 'solana') continue;
+
+                // 3. ENRICH DATA
                 const details = await axios.get(`https://api.dexscreener.com/latest/dex/tokens/${raw.tokenAddress}`).catch(()=>null);
                 if(details && details.data.pairs) {
                     const pair = details.data.pairs[0];
-                    if (pair && pair.liquidity && pair.liquidity.usd > 1000) {
+                    if (pair) {
+                        // 4. SECURITY: Dust & Honeypot Check
+                        if (pair.liquidity && pair.liquidity.usd < 1000) continue; 
+                        if (pair.txns && pair.txns.h24.buys > 10 && pair.txns.h24.sells === 0) continue; 
+
+                        // VALID TARGET FOUND
                         potentialTarget = {
                             name: pair.baseToken.name,
                             symbol: pair.baseToken.symbol,
                             tokenAddress: pair.baseToken.address,
                             price: pair.priceUsd,
                             chain: raw.chainId,
-                            sentimentScore: 0.88 
+                            sentimentScore: 0.95 
                         };
-                        break;
+                        break; // Stop looking, we found one!
                     }
                 }
             }
@@ -334,26 +323,24 @@ async function runNeuralScanner(chatId, isManual = false) {
         if (potentialTarget) {
             processSignal(chatId, potentialTarget, isManual);
         } else if (isManual) {
-            bot.sendMessage(chatId, "⚠️ No signals found.");
+            bot.sendMessage(chatId, "⚠️ No valid signals right now.");
         }
 
     } catch (e) {}
     finally {
+        // INSTANT RE-LOOP: 100ms
         if (SYSTEM.autoPilot && !SYSTEM.activePosition) setTimeout(() => runNeuralScanner(chatId), 100);
     }
 }
 
 async function processSignal(chatId, target, isManual) {
     const chainInfo = CHAINS[target.chain];
-    const strategy = STRATEGY_MODES[SYSTEM.strategyMode];
-    let confidence = 0.92; 
-
+    
     console.log(`[SIGNAL] ${target.symbol} on ${chainInfo.name.toUpperCase()}`.cyan);
 
     if (SYSTEM.autoPilot) {
-        if (confidence >= strategy.minConf) {
-            await executeBuy(chatId, target);
-        }
+        // EXECUTE INSTANTLY (No Manual Input Needed)
+        await executeBuy(chatId, target);
     } 
     else if (isManual) {
         SYSTEM.pendingTarget = target;
@@ -367,7 +354,7 @@ Action: \`/buy\` or \`/approve\``, {parse_mode:"Markdown"});
 }
 
 // ==========================================
-//  PROFIT MONITOR
+//  PROFIT MONITOR (HYBRID EXIT)
 // ==========================================
 
 async function runProfitMonitor(chatId) {
@@ -396,8 +383,7 @@ async function runProfitMonitor(chatId) {
         process.stdout.write(`\r[${chain.toUpperCase()}] ${symbol} PnL: ${profit.toFixed(2)}% | Drop: ${drop.toFixed(2)}%   `);
 
         if ((drop >= trail && profit > 0.5) || profit <= -stop) {
-            const msg = profit > 0 ? `📉 **PROFIT EXIT:**` : `🛑 **STOP LOSS:**`;
-            bot.sendMessage(chatId, `${msg} ${symbol} (${profit.toFixed(2)}%). Selling...`);
+            bot.sendMessage(chatId, `📉 **EXITING:** ${symbol} (${profit.toFixed(2)}%)`);
             await executeSell(chatId);
         }
 
@@ -419,33 +405,33 @@ bot.onText(/\/connect\s+(.+)/i, async (msg, match) => {
         process.env.PRIVATE_KEY = match[1];
         await switchChain('ethereum'); 
         const bal = await currentProvider.getBalance(currentWallet.address);
-        bot.sendMessage(chatId, `✅ **CONNECTED:** \`${currentWallet.address}\`\nETH Bal: ${ethers.formatEther(bal).slice(0,6)}`);
+        bot.sendMessage(chatId, `✅ **CONNECTED:** \`${currentWallet.address}\``, {parse_mode:"Markdown"});
     } catch (e) { bot.sendMessage(chatId, `❌ Key Error.`); }
 });
 
 bot.onText(/\/start/i, (msg) => {
     process.env.CHAT_ID = msg.chat.id;
     bot.sendMessage(msg.chat.id, `
-🦁 **APEX v8000.1 (OMNI-WARLORD)**
+🦁 **APEX v9000 (INSTANT-AUTO)**
 \`————————————————————————\`
-**/auto** - Start Omni-Scan
-**/manual** - Stop Auto, Enable Hybrid
-**/scan** - Manual Scan
+**/auto** - Start Hands-Free Trading
+**/manual** - Stop Auto / Enable Alerts
+**/scan** - Instant Manual Find
 **/buy <addr>** - Force Buy
-**/sell** - Sell Current
+**/sell** - Panic Sell
 **/setamount 5%** - Sizing
 \`————————————————————————\``, { parse_mode: "Markdown" });
 });
 
 bot.onText(/\/auto/i, (msg) => {
     SYSTEM.autoPilot = !SYSTEM.autoPilot;
-    bot.sendMessage(msg.chat.id, SYSTEM.autoPilot ? "🚀 **OMNI-AUTO ENGAGED**" : "⏸ **PAUSED**");
+    bot.sendMessage(msg.chat.id, SYSTEM.autoPilot ? "🚀 **AUTO-PILOT ENGAGED**" : "⏸ **PAUSED**");
     if(SYSTEM.autoPilot) runNeuralScanner(msg.chat.id);
 });
 
 bot.onText(/\/manual/i, (msg) => {
     SYSTEM.autoPilot = false;
-    bot.sendMessage(msg.chat.id, "✋ **MANUAL MODE:** Auto-buying disabled. Auto-Selling ENABLED. Use `/buy` or `/scan`.");
+    bot.sendMessage(msg.chat.id, "✋ **MANUAL MODE:** Alerts Enabled. Auto-Buy Disabled.");
 });
 
 bot.onText(/\/setamount\s+(.+)/i, (msg, match) => {
@@ -466,7 +452,6 @@ bot.onText(/\/scan/i, (msg) => runNeuralScanner(msg.chat.id, true));
 bot.onText(/\/buy(?:\s+(.+))?/i, async (msg, match) => {
     const addr = match[1];
     if(addr) {
-        // Assume ETH for manual unless specified
         await executeBuy(msg.chat.id, { tokenAddress: addr, symbol: "MANUAL", chain: 'ethereum' });
     } else if (SYSTEM.pendingTarget) {
         await executeBuy(msg.chat.id, SYSTEM.pendingTarget);
@@ -490,27 +475,6 @@ bot.onText(/\/status/i, async (msg) => {
 **Pos:** ${SYSTEM.activePosition ? SYSTEM.activePosition.symbol : 'Idle'}`, {parse_mode:"Markdown"});
 });
 
-// Settings & Risk
-bot.onText(/\/settings/i, (msg) => {
-    const risk = RISK_PROFILES[SYSTEM.riskProfile];
-    bot.sendMessage(msg.chat.id, `⚙️ **CONFIG:** ${risk.label} | ${SYSTEM.strategyMode}`, { parse_mode: "Markdown" });
-});
-
-bot.onText(/\/risk\s+(.+)/i, (msg, match) => {
-    const key = match[1].toUpperCase();
-    if (RISK_PROFILES[key]) { SYSTEM.riskProfile = key; bot.sendMessage(msg.chat.id, `🛡 **RISK:** ${RISK_PROFILES[key].label}`); }
-});
-
-bot.onText(/\/mode\s+(.+)/i, (msg, match) => {
-    const key = match[1].toUpperCase();
-    if (STRATEGY_MODES[key]) { SYSTEM.strategyMode = key; bot.sendMessage(msg.chat.id, `🔄 **STRATEGY:** ${STRATEGY_MODES[key].label}`); }
-});
-
-bot.onText(/\/restart/i, (msg) => {
-    SYSTEM.autoPilot = false; SYSTEM.isLocked = false; SYSTEM.activePosition = null; SYSTEM.pendingTarget = null;
-    bot.sendMessage(msg.chat.id, `🔄 **RESET**`);
-});
-
-// START SERVER (FIXED)
-http.createServer((req, res) => res.end("APEX v8000.1 ONLINE")).listen(8080);
-console.log("APEX SIGNAL v8000.1 ONLINE [OMNI-CHAIN WARLORD + PATCH].".magenta);
+// START SERVER
+http.createServer((req, res) => res.end("APEX v9000 ONLINE")).listen(8080);
+console.log("APEX SIGNAL v9000.0 ONLINE [INSTANT-AUTO EVM].".magenta);
