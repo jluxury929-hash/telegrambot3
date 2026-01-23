@@ -1,9 +1,10 @@
 /**
  * ===============================================================================
- * APEX PREDATOR: NEURAL SIGNAL v8000.0 (HYBRID OMNI-CHAIN)
+ * APEX PREDATOR: NEURAL SIGNAL v8000.1 (AXIOS STABLE FIX)
  * ===============================================================================
  * ARCH: Multi-Chain (EVM + SVM) | RPG System | Neural Scanner | Auto-Derivation
  * NETWORKS: ETH | SOLANA | BASE | BSC | ARBITRUM
+ * FIX: Replaced fetch with Axios for stable Jupiter API connections
  * ===============================================================================
  */
 
@@ -14,7 +15,6 @@ const bip39 = require('bip39');
 const { derivePath } = require('ed25519-hd-key');
 const axios = require('axios');
 const TelegramBot = require('node-telegram-bot-api');
-const fetch = require('cross-fetch');
 const http = require('http');
 require('colors');
 
@@ -83,7 +83,7 @@ const bot = new TelegramBot(TELEGRAM_TOKEN, {
 // ==========================================
 let PLAYER = {
     level: 1, xp: 0, nextLevelXp: 1000, class: "DATA ANALYST",
-    totalProfit: 0.0, // Tracking in USD % or Raw Units
+    totalProfit: 0.0, 
     dailyQuests: [
         { id: 'sim', task: "Analyze Neural Signals", count: 0, target: 10, done: false, xp: 150 },
         { id: 'trade', task: "Execute High-Confidence Setup", count: 0, target: 1, done: false, xp: 500 }
@@ -265,7 +265,7 @@ Action: ${SYSTEM.autoPilot ? 'EXECUTING' : 'WAITING'}
 }
 
 // ==========================================
-//  EXECUTION ENGINE (HYBRID)
+//  EXECUTION ENGINE (AXIOS UPGRADE)
 // ==========================================
 
 async function executeBuy(chatId) {
@@ -321,28 +321,41 @@ async function executeSell(chatId) {
     }
 }
 
-// --- SOLANA SPECIFIC (JUPITER) ---
+// --- SOLANA SPECIFIC (JUPITER VIA AXIOS) ---
 async function buySolana(chatId, tokenAddr, amountSol) {
     try {
         const inputMint = 'So11111111111111111111111111111111111111112'; // SOL
         const amount = Math.floor(amountSol * LAMPORTS_PER_SOL);
         const slip = RISK_PROFILES[SYSTEM.riskProfile].slippage * 100; // bps
 
-        const quote = await (await fetch(`https://quote-api.jup.ag/v6/quote?inputMint=${inputMint}&outputMint=${tokenAddr}&amount=${amount}&slippageBps=${slip}`)).json();
-        if(!quote || quote.error) throw new Error("No Route");
+        // 1. Get Quote
+        const quoteUrl = `https://quote-api.jup.ag/v6/quote?inputMint=${inputMint}&outputMint=${tokenAddr}&amount=${amount}&slippageBps=${slip}`;
+        const quoteRes = await axios.get(quoteUrl);
+        const quote = quoteRes.data;
 
-        const { swapTransaction } = await (await fetch('https://quote-api.jup.ag/v6/swap', {
-            method: 'POST', headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ quoteResponse: quote, userPublicKey: solWallet.publicKey.toString(), wrapAndUnwrapSol: true })
-        })).json();
+        if(!quote || quote.error) throw new Error("No Route Found");
 
+        // 2. Get Transaction
+        const swapRes = await axios.post('https://quote-api.jup.ag/v6/swap', {
+            quoteResponse: quote,
+            userPublicKey: solWallet.publicKey.toString(),
+            wrapAndUnwrapSol: true
+        });
+        
+        const { swapTransaction } = swapRes.data;
+
+        // 3. Sign & Send
         const tx = VersionedTransaction.deserialize(Buffer.from(swapTransaction, 'base64'));
         tx.sign([solWallet]);
         const txid = await solConnection.sendRawTransaction(tx.serialize(), {skipPreflight: true});
         
         bot.sendMessage(chatId, `🚀 **SOL TX:** https://solscan.io/tx/${txid}`);
         return { amountOut: quote.outAmount };
-    } catch(e) { bot.sendMessage(chatId, `⚠️ SOL Fail: ${e.message}`); return null; }
+    } catch(e) { 
+        bot.sendMessage(chatId, `⚠️ SOL Fail: ${e.message}`); 
+        console.error(e);
+        return null; 
+    }
 }
 
 async function sellSolana(chatId, tokenAddr, amountToken) {
@@ -350,17 +363,29 @@ async function sellSolana(chatId, tokenAddr, amountToken) {
         const outputMint = 'So11111111111111111111111111111111111111112';
         const slip = RISK_PROFILES[SYSTEM.riskProfile].slippage * 100;
 
-        const quote = await (await fetch(`https://quote-api.jup.ag/v6/quote?inputMint=${tokenAddr}&outputMint=${outputMint}&amount=${amountToken}&slippageBps=${slip}`)).json();
-        const { swapTransaction } = await (await fetch('https://quote-api.jup.ag/v6/swap', {
-            method: 'POST', headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ quoteResponse: quote, userPublicKey: solWallet.publicKey.toString(), wrapAndUnwrapSol: true })
-        })).json();
+        // 1. Get Quote
+        const quoteUrl = `https://quote-api.jup.ag/v6/quote?inputMint=${tokenAddr}&outputMint=${outputMint}&amount=${amountToken}&slippageBps=${slip}`;
+        const quoteRes = await axios.get(quoteUrl);
+        const quote = quoteRes.data;
 
+        // 2. Get Transaction
+        const swapRes = await axios.post('https://quote-api.jup.ag/v6/swap', {
+            quoteResponse: quote,
+            userPublicKey: solWallet.publicKey.toString(),
+            wrapAndUnwrapSol: true
+        });
+        
+        const { swapTransaction } = swapRes.data;
+
+        // 3. Sign & Send
         const tx = VersionedTransaction.deserialize(Buffer.from(swapTransaction, 'base64'));
         tx.sign([solWallet]);
         const txid = await solConnection.sendRawTransaction(tx.serialize(), {skipPreflight: true});
         return { hash: txid };
-    } catch(e) { bot.sendMessage(chatId, `⚠️ SOL Sell Fail: ${e.message}`); return null; }
+    } catch(e) { 
+        bot.sendMessage(chatId, `⚠️ SOL Sell Fail: ${e.message}`); 
+        return null; 
+    }
 }
 
 // --- EVM SPECIFIC (UNISWAP V2) ---
@@ -370,14 +395,13 @@ async function buyEVM(chatId, tokenAddr, amountEth) {
         const path = [net.weth, tokenAddr];
         const value = ethers.parseEther(amountEth);
         
-        // Simple gas handling (v6000 Bribe logic is too complex for 5-chain generic, used Standard gas)
         const tx = await evmRouter.swapExactETHForTokens(
             0, path, evmSigner.address, Math.floor(Date.now()/1000)+120,
             { value: value, gasLimit: 300000 }
         );
         bot.sendMessage(chatId, `🚀 **${SYSTEM.currentNetwork} TX:** ${tx.hash}`);
-        await tx.wait(); // Wait for confirmation
-        return { amountOut: 0 }; // We don't calculate exact out in this simplified version, assume successful
+        await tx.wait(); 
+        return { amountOut: 0 }; 
     } catch(e) { bot.sendMessage(chatId, `⚠️ EVM Fail: ${e.message}`); return null; }
 }
 
@@ -386,12 +410,10 @@ async function sellEVM(chatId, tokenAddr, amountToken) {
         const net = NETWORKS[SYSTEM.currentNetwork];
         const path = [tokenAddr, net.weth];
         
-        // 1. Approve
         const token = new Contract(tokenAddr, ["function approve(address, uint) returns (bool)", "function balanceOf(address) view returns (uint)"], evmSigner);
-        const bal = await token.balanceOf(evmSigner.address); // Get actual balance to sell all
+        const bal = await token.balanceOf(evmSigner.address); 
         await (await token.approve(net.router, bal)).wait();
 
-        // 2. Swap
         const tx = await evmRouter.swapExactTokensForETH(
             bal, 0, path, evmSigner.address, Math.floor(Date.now()/1000)+120,
             { gasLimit: 350000 }
@@ -414,10 +436,8 @@ async function runProfitMonitor(chatId) {
         const currentPrice = parseFloat(res.data.pairs[0].priceUsd);
         const entryPrice = SYSTEM.activePosition.entryPrice;
         
-        // Calculate PnL %
         const pnl = ((currentPrice - entryPrice) / entryPrice) * 100;
         
-        // Track High Watermark
         if (!SYSTEM.activePosition.highestPrice || currentPrice > SYSTEM.activePosition.highestPrice) {
             SYSTEM.activePosition.highestPrice = currentPrice;
         }
@@ -426,10 +446,8 @@ async function runProfitMonitor(chatId) {
         const strategy = STRATEGY_MODES[SYSTEM.strategyMode];
         const risk = RISK_PROFILES[SYSTEM.riskProfile];
 
-        // Print Loop
         process.stdout.write(`\r[MONITOR] ${SYSTEM.activePosition.symbol} PnL: ${pnl.toFixed(2)}% | Drop: ${drop.toFixed(2)}%  `);
 
-        // DECISION LOGIC
         if (drop >= strategy.trail && pnl > 1) {
             bot.sendMessage(chatId, `📉 **TRAILING STOP:** Reversing at +${pnl.toFixed(2)}%`);
             await executeSell(chatId);
@@ -453,7 +471,7 @@ async function runProfitMonitor(chatId) {
 
 bot.onText(/\/start/, (msg) => {
     bot.sendMessage(msg.chat.id, `
-🐲 **APEX PREDATOR v8000 (HYBRID)**
+🐲 **APEX PREDATOR v8000.1 (AXIOS)**
 Operator: ${msg.from.first_name} | Class: ${PLAYER.class}
 Current Network: ${SYSTEM.currentNetwork}
 
