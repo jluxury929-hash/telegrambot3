@@ -1,11 +1,11 @@
 /**
  * ===============================================================================
- * 🧠 APEX PREDATOR: NEURAL SIGNAL v6000.0 (COMPLETE EDITION)
+ * 🧠 APEX PREDATOR: NEURAL SIGNAL v6000.0 (DYNAMIC SIZING EDITION)
  * ===============================================================================
  * ARCHITECTURE:
- * 1. CORE: Neural Oracle (AI Sentiment Analysis) replacing Mempool Sniffer.
- * 2. INTERFACE: Full Manual Command Suite (/risk, /mode, /amount, /settings).
- * 3. EXECUTION: MEV-Protected Shield with Risk-Adjusted Gas Logic.
+ * 1. INTELLIGENCE: Web AI Scraper + Signal Convergence (Sentiment + Techs).
+ * 2. RISK MANAGEMENT: Dynamic Position Sizing (Percentage vs Fixed).
+ * 3. EXECUTION: MEV-Protected transactions to prevent front-running.
  * ===============================================================================
  */
 
@@ -57,7 +57,7 @@ if (process.env.PRIVATE_KEY) {
 }
 
 // ==========================================
-//  ADVANCED CONFIGURATION (Integrated v2500 & v6000)
+//  ADVANCED CONFIGURATION
 // ==========================================
 
 const RISK_PROFILES = {
@@ -72,6 +72,62 @@ const STRATEGY_MODES = {
     DAY:    { trail: 10, minConf: 0.85, label: " SWING (Trend Follower)" },  
     MOON:   { trail: 30, minConf: 0.90, label: " MOON (High Conviction)" }  
 };
+
+// ==========================================
+//  SYSTEM STATE & SIZING LOGIC
+// ==========================================
+
+let SYSTEM = {
+    autoPilot: false,
+    isLocked: false,
+    nonce: null,
+    riskProfile: 'MEDIUM',
+    strategyMode: 'DAY',
+    
+    // NEW: Dynamic Sizing Configuration
+    tradeStyle: 'PERCENT', // 'PERCENT' or 'FIXED'
+    tradeValue: 5,         // Represents 5% or 5 ETH depending on style
+    gasReserve: ethers.parseEther("0.015"), // Always leave 0.015 ETH for gas
+
+    activePosition: null,
+    pendingTarget: null,
+    lastTradedToken: null
+};
+
+// Helper: Calculate Trade Amount based on Wallet Balance
+async function calculateTradeSize(chatId) {
+    if (!wallet) return 0n;
+    
+    try {
+        const balance = await provider.getBalance(wallet.address);
+        
+        // Safety Check: Do we have enough for Gas?
+        if (balance <= SYSTEM.gasReserve) {
+            bot.sendMessage(chatId, `⚠️ **LOW FUNDS:** Wallet balance (${ethers.formatEther(balance)}) is below gas reserve.`);
+            return 0n;
+        }
+
+        const availableEth = balance - SYSTEM.gasReserve;
+        let finalAmount = 0n;
+
+        if (SYSTEM.tradeStyle === 'PERCENT') {
+            // Calculate % of Available ETH
+            const percentBn = BigInt(Math.floor(SYSTEM.tradeValue * 100)); // e.g. 5% -> 500 (basis points)
+            finalAmount = (availableEth * percentBn) / 10000n; 
+        } else {
+            // Fixed Amount
+            finalAmount = ethers.parseEther(SYSTEM.tradeValue.toString());
+            // Cap at available balance
+            if (finalAmount > availableEth) finalAmount = availableEth;
+        }
+
+        return finalAmount;
+
+    } catch (e) {
+        console.log("Error calculating size", e);
+        return 0n;
+    }
+}
 
 // ==========================================
 //  RPG SYSTEM
@@ -123,23 +179,7 @@ const getXpBar = () => {
 };
 
 // ==========================================
-//  SYSTEM STATE
-// ==========================================
-
-let SYSTEM = {
-    autoPilot: false,
-    isLocked: false,
-    nonce: null,
-    riskProfile: 'MEDIUM',
-    strategyMode: 'DAY',
-    tradeAmount: "0.02", 
-    activePosition: null,
-    pendingTarget: null,
-    lastTradedToken: null
-};
-
-// ==========================================
-//  EXECUTION SHIELD (Adaptive Gas Logic)
+//  EXECUTION SHIELD
 // ==========================================
 
 async function forceConfirm(chatId, type, tokenName, txBuilder) {
@@ -157,7 +197,6 @@ async function forceConfirm(chatId, type, tokenName, txBuilder) {
     };
 
     const baseFee = (await provider.getFeeData()).maxPriorityFeePerGas || ethers.parseUnits("1.5", "gwei");
-    // Calculate bribe based on Risk Profile
     const initialBribe = (baseFee * risk.gasMultiplier) / 100n; 
 
     if(chatId) bot.sendMessage(chatId, `📡 **${type} ${tokenName}:** Signal Verified. Broadcasting (${risk.label})...`);
@@ -169,7 +208,7 @@ async function forceConfirm(chatId, type, tokenName, txBuilder) {
         try {
             const receipt = await Promise.race([
                 tx.wait(1),
-                new Promise((_, reject) => setTimeout(() => reject(new Error("STALL")), 15000))
+                new Promise((_, reject) => setTimeout(() => reject(new Error("STALL")), 12000))
             ]);
 
             if (receipt && receipt.status === 1) {
@@ -203,14 +242,16 @@ async function forceConfirm(chatId, type, tokenName, txBuilder) {
 }
 
 // ==========================================
-//  v6000: NEURAL ORACLE
+//  LAYER A: NEURAL ORACLE
 // ==========================================
 
-async function runNeuralScanner(chatId) {
-    if (!SYSTEM.autoPilot || SYSTEM.activePosition || SYSTEM.isLocked || !wallet) return;
+async function runNeuralScanner(chatId, isManual = false) {
+    if ((!SYSTEM.autoPilot && !isManual) || SYSTEM.activePosition || SYSTEM.isLocked || !wallet) return;
 
     try {
+        if(isManual) bot.sendMessage(chatId, "🔭 **MANUAL SCAN:** Analyzing market depth...");
         updateQuest('sim', chatId);
+        
         let potentialTarget = null;
         
         if (AI_API_URL) {
@@ -219,7 +260,6 @@ async function runNeuralScanner(chatId) {
                 potentialTarget = res.data; 
             } catch(e) { console.log("AI API Unreachable".gray); }
         } else {
-            // SIMULATION
             const res = await axios.get('https://api.dexscreener.com/token-boosts/top/v1');
             if (res.data && res.data.length > 0) {
                 const raw = res.data[Math.floor(Math.random() * Math.min(5, res.data.length))];
@@ -242,20 +282,22 @@ async function runNeuralScanner(chatId) {
         }
 
         if (potentialTarget) {
-            await processSignal(chatId, potentialTarget);
+            await processSignal(chatId, potentialTarget, isManual);
+        } else if (isManual) {
+            bot.sendMessage(chatId, "⚠️ **SCAN COMPLETE:** No high-confidence signals found.");
         }
 
     } catch (e) { console.log(`[AI] Neural Scan Cycle...`.gray); }
     finally {
-        if (SYSTEM.autoPilot) setTimeout(() => runNeuralScanner(chatId), 8000);
+        if (SYSTEM.autoPilot && !isManual) setTimeout(() => runNeuralScanner(chatId), 8000);
     }
 }
 
-async function processSignal(chatId, data) {
+async function processSignal(chatId, data, isManual) {
     const strategy = STRATEGY_MODES[SYSTEM.strategyMode];
-    
-    // CONVERGENCE LOGIC
     let confidence = 0.0;
+    
+    // Convergence Logic
     if (data.sentimentScore > 0.8) confidence += 0.4;
     else if (data.sentimentScore > 0.6) confidence += 0.2;
     if (data.rsi < 70 && data.rsi > 30) confidence += 0.3; 
@@ -264,8 +306,9 @@ async function processSignal(chatId, data) {
 
     console.log(`[NEURAL] Analyzing ${data.symbol}... Confidence: ${(confidence*100).toFixed(0)}%`.cyan);
 
-    if (confidence >= strategy.minConf) {
+    if (confidence >= strategy.minConf || (isManual && confidence > 0.5)) {
         SYSTEM.pendingTarget = data;
+        
         bot.sendMessage(chatId, `
 🧠 **NEURAL SIGNAL DETECTED**
 \`————————————————————————————\`
@@ -278,12 +321,20 @@ async function processSignal(chatId, data) {
 
         if (SYSTEM.autoPilot) {
             await executeBuy(chatId, data);
+        } else {
+            bot.sendMessage(chatId, `💡 Type \`/approve\` to execute this trade.`);
         }
     }
 }
 
 async function executeBuy(chatId, target) {
-    const tradeValue = ethers.parseEther(SYSTEM.tradeAmount);
+    // UPDATED: Use Dynamic Sizing
+    const tradeValue = await calculateTradeSize(chatId);
+    
+    if (tradeValue === 0n) {
+        return bot.sendMessage(chatId, "❌ **ABORT:** Trade value is 0 or insufficient funds.");
+    }
+
     let amounts;
     try {
         amounts = await router.getAmountsOut(tradeValue, [WETH, target.tokenAddress]);
@@ -346,7 +397,7 @@ async function runProfitMonitor(chatId) {
                 bot.sendMessage(chatId, `📉 **TREND REVERSAL:** ${displayName} dropped ${dropFromPeak.toFixed(2)}% from peak. Securing ${totalProfit.toFixed(2)}% profit.`);
                 await executeSell(chatId);
             } else {
-                bot.sendMessage(chatId, `📉 **PEAK ALERT:** ${displayName} reversing. \`/sell ${symbol}\``);
+                bot.sendMessage(chatId, `📉 **PEAK ALERT:** ${displayName} reversing. \`/sell\``);
             }
         }
         else if (totalProfit <= -(risk.stopLoss)) {
@@ -383,12 +434,14 @@ async function executeSell(chatId) {
         if (SYSTEM.autoPilot) {
             bot.sendMessage(chatId, "♻️ **ROTATION:** Trade complete. Resuming Neural Scan...");
             runNeuralScanner(chatId);
+        } else {
+             bot.sendMessage(chatId, "✅ **SOLD:** Position closed.");
         }
     }
 }
 
 // ==========================================
-//  COMMAND INTERFACE (Complete v2500 Port)
+//  COMMAND INTERFACE
 // ==========================================
 
 // 1. CONNECT
@@ -411,103 +464,71 @@ bot.onText(/\/connect\s+(.+)/i, async (msg, match) => {
 bot.onText(/\/start/i, (msg) => {
     process.env.CHAT_ID = msg.chat.id;
     bot.sendMessage(msg.chat.id, `
-🧠 **APEX SIGNAL v6000.0 (NEURAL)** \`————————————————————————————\`
+🧠 **APEX SIGNAL v6000.0 (ULTIMATE)** \`————————————————————————————\`
 **OPERATOR:** ${msg.from.first_name}
 **CLASS:** ${PLAYER.class} (Lvl ${PLAYER.level})
 **XP STATUS:** [${getXpBar()}]
 
-**COMMAND INTERFACE**
+**COMMANDS**
 \`/connect <key>\` - Link Wallet
-\`/auto\` - Toggle Neural Auto-Pilot
-\`/manual\` - Emergency Override
+\`/scan\` - Manual AI Scan
+\`/approve\` - Approve Signal
+\`/setamount <val>\` - Set 5% or 0.1 ETH
+\`/auto\` - Toggle Auto-Pilot
+\`/manual\` - Emergency Stop
 \`/settings\` - View Config
-\`/risk <low|medium|high>\` - Set Risk
-\`/mode <scalp|day|moon>\` - Set Strategy
-\`/amount <eth>\` - Set Trade Size
 
 *Neural Engine Standing By.*
 \`————————————————————————————\``, { parse_mode: "Markdown" });
 });
 
-// 3. SETTINGS (Added from v2500)
-bot.onText(/\/settings/i, (msg) => {
-    const risk = RISK_PROFILES[SYSTEM.riskProfile];
-    const strat = STRATEGY_MODES[SYSTEM.strategyMode];
-    bot.sendMessage(msg.chat.id, `
-⚙️ **NEURAL CONFIGURATION**
-\`————————————————————————————\`
-**Risk Profile:** \`${risk.label}\`
-   • Slippage: ${risk.slippage / 100}%
-   • Stop Loss: -${risk.stopLoss}%
-   • Gas: +${Number(risk.gasMultiplier) - 100}%
-
-**Strategy:** \`${strat.label}\`
-   • Trailing Stop: ${strat.trail}%
-   • Min Confidence: ${strat.minConf * 100}%
-
-**Trade Size:** \`${SYSTEM.tradeAmount} ETH\`
-\`————————————————————————————\``, { parse_mode: "Markdown" });
-});
-
-// 4. RISK (Added from v2500)
-bot.onText(/\/risk\s+(.+)/i, (msg, match) => {
-    const input = match[1].toUpperCase();
-    const map = { 'SAFE': 'LOW', 'BALANCED': 'MEDIUM', 'AGGRESSIVE': 'HIGH', 'DEGEN': 'DEGEN' };
-    const key = map[input] || input;
-    if (RISK_PROFILES[key]) {
-        SYSTEM.riskProfile = key;
-        bot.sendMessage(msg.chat.id, `🛡 **RISK UPDATED:** Now running in ${RISK_PROFILES[key].label} mode.`);
+// 3. SET AMOUNT (New Command)
+bot.onText(/\/setamount\s+(.+)/i, (msg, match) => {
+    const input = match[1].trim();
+    
+    if (input.endsWith('%')) {
+        // Percentage Mode
+        const percent = parseFloat(input.replace('%', ''));
+        if (percent > 0 && percent <= 100) {
+            SYSTEM.tradeStyle = 'PERCENT';
+            SYSTEM.tradeValue = percent;
+            bot.sendMessage(msg.chat.id, `⚖️ **SIZING:** Trades set to **${percent}%** of available wallet balance.`);
+        } else {
+            bot.sendMessage(msg.chat.id, `⚠️ Invalid percentage. Use 1% to 100%.`);
+        }
     } else {
-        bot.sendMessage(msg.chat.id, `⚠️ Invalid. Use: low, medium, high, degen`);
+        // Fixed Amount Mode
+        const val = parseFloat(input);
+        if (val > 0) {
+            SYSTEM.tradeStyle = 'FIXED';
+            SYSTEM.tradeValue = val;
+            bot.sendMessage(msg.chat.id, `⚖️ **SIZING:** Trades set to **${val} ETH** fixed.`);
+        } else {
+            bot.sendMessage(msg.chat.id, `⚠️ Invalid amount.`);
+        }
     }
 });
 
-// 5. MODE
-bot.onText(/\/mode\s+(.+)/i, (msg, match) => {
-    const key = match[1].toUpperCase();
-    const map = { 'SHORT': 'SCALP', 'LONG': 'MOON', 'MID': 'DAY' };
-    const finalKey = map[key] || key;
-    if (STRATEGY_MODES[finalKey]) {
-        SYSTEM.strategyMode = finalKey;
-        const s = STRATEGY_MODES[finalKey];
-        bot.sendMessage(msg.chat.id, `🔄 **STRATEGY UPDATED:** ${s.label}\nMin Confidence: ${s.minConf * 100}%`);
-    } else {
-        bot.sendMessage(msg.chat.id, `⚠️ Invalid. Use: scalp, day, moon`);
-    }
-});
-
-// 6. AMOUNT (Added from v2500)
-bot.onText(/\/amount\s+(.+)/i, (msg, match) => {
-    const val = parseFloat(match[1]);
-    if (val > 0) {
-        SYSTEM.tradeAmount = match[1];
-        bot.sendMessage(msg.chat.id, `💰 **SIZE UPDATED:** Trading \`${SYSTEM.tradeAmount} ETH\` per signal.`);
-    } else {
-        bot.sendMessage(msg.chat.id, `⚠️ Invalid Amount.`);
-    }
-});
-
-// 7. MANUAL / AUTO
-bot.onText(/\/auto/i, (msg) => {
+// 4. SCAN
+bot.onText(/\/scan/i, (msg) => {
     if (!wallet) return bot.sendMessage(msg.chat.id, "⚠️ Connect Wallet First.");
-    SYSTEM.autoPilot = !SYSTEM.autoPilot;
-    if (SYSTEM.autoPilot) {
-        bot.sendMessage(msg.chat.id, "🔭 **NEURAL SCANNER ENGAGED.**\nMonitoring Sentiment, RSI, and Social Volume...");
-        runNeuralScanner(msg.chat.id);
-    } else {
-        bot.sendMessage(msg.chat.id, "⏸ **PAUSED.**");
-    }
+    runNeuralScanner(msg.chat.id, true); // true = isManual
 });
 
-bot.onText(/\/manual/i, (msg) => {
-    SYSTEM.autoPilot = false;
-    bot.sendMessage(msg.chat.id, "✋ **MANUAL OVERRIDE:** Auto-Pilot disengaged. Monitoring existing positions only.");
-    if (SYSTEM.activePosition) runProfitMonitor(msg.chat.id);
-});
+// 5. APPROVE
+bot.onText(/\/approve(?:\s+(.+))?/i, async (msg, match) => {
+    if (!wallet) return bot.sendMessage(msg.chat.id, "⚠️ Connect Wallet First.");
+    const manualAddress = match[1];
 
-// 8. APPROVE
-bot.onText(/\/approve/i, async (msg) => {
-    if (SYSTEM.pendingTarget) {
+    if (manualAddress) {
+        bot.sendMessage(msg.chat.id, `🚨 **MANUAL OVERRIDE:** Forcing buy on ${manualAddress}`);
+        await executeBuy(msg.chat.id, {
+            tokenAddress: manualAddress,
+            symbol: "MANUAL",
+            name: "Override Token"
+        });
+    } 
+    else if (SYSTEM.pendingTarget) {
         bot.sendMessage(msg.chat.id, `👍 **APPROVED:** Buying ${SYSTEM.pendingTarget.symbol}...`);
         await executeBuy(msg.chat.id, SYSTEM.pendingTarget);
     } else {
@@ -515,7 +536,89 @@ bot.onText(/\/approve/i, async (msg) => {
     }
 });
 
-// 9. STATUS
+// 6. BUY
+bot.onText(/\/buy\s+(.+)/i, async (msg, match) => {
+    if (!wallet) return bot.sendMessage(msg.chat.id, "⚠️ Connect Wallet First.");
+    bot.sendMessage(msg.chat.id, `🛒 **MANUAL BUY:** Executing...`);
+    await executeBuy(msg.chat.id, { tokenAddress: match[1], symbol: "BUY_CMD", name: "Manual" });
+});
+
+// 7. SELL
+bot.onText(/\/sell/i, async (msg) => {
+    if (SYSTEM.activePosition) {
+        bot.sendMessage(msg.chat.id, "📉 **PANIC SELL INITIATED...**");
+        await executeSell(msg.chat.id);
+    } else {
+        bot.sendMessage(msg.chat.id, "No position to sell.");
+    }
+});
+
+// 8. AUTO
+bot.onText(/\/auto/i, (msg) => {
+    if (!wallet) return bot.sendMessage(msg.chat.id, "⚠️ Connect Wallet First.");
+    SYSTEM.autoPilot = !SYSTEM.autoPilot;
+    if (SYSTEM.autoPilot) {
+        bot.sendMessage(msg.chat.id, "🔭 **NEURAL SCANNER ENGAGED.**");
+        runNeuralScanner(msg.chat.id);
+    } else {
+        bot.sendMessage(msg.chat.id, "⏸ **PAUSED.**");
+    }
+});
+
+// 9. SETTINGS
+bot.onText(/\/settings/i, (msg) => {
+    const risk = RISK_PROFILES[SYSTEM.riskProfile];
+    const strat = STRATEGY_MODES[SYSTEM.strategyMode];
+    const sizeDisplay = SYSTEM.tradeStyle === 'PERCENT' ? `${SYSTEM.tradeValue}% of Bag` : `${SYSTEM.tradeValue} ETH Fixed`;
+
+    bot.sendMessage(msg.chat.id, `
+⚙️ **NEURAL CONFIGURATION**
+\`————————————————————————————\`
+**Risk:** ${risk.label}
+**Strategy:** ${strat.label}
+**Sizing:** ${sizeDisplay}
+\`————————————————————————————\``, { parse_mode: "Markdown" });
+});
+
+// 10. RISK
+bot.onText(/\/risk\s+(.+)/i, (msg, match) => {
+    const input = match[1].toUpperCase();
+    const map = { 'SAFE': 'LOW', 'BALANCED': 'MEDIUM', 'AGGRESSIVE': 'HIGH', 'DEGEN': 'DEGEN' };
+    const key = map[input] || input;
+    if (RISK_PROFILES[key]) {
+        SYSTEM.riskProfile = key;
+        bot.sendMessage(msg.chat.id, `🛡 **RISK UPDATED:** ${RISK_PROFILES[key].label}`);
+    }
+});
+
+// 11. MODE
+bot.onText(/\/mode\s+(.+)/i, (msg, match) => {
+    const key = match[1].toUpperCase();
+    const map = { 'SHORT': 'SCALP', 'LONG': 'MOON', 'MID': 'DAY' };
+    const finalKey = map[key] || key;
+    if (STRATEGY_MODES[finalKey]) {
+        SYSTEM.strategyMode = finalKey;
+        bot.sendMessage(msg.chat.id, `🔄 **STRATEGY UPDATED:** ${STRATEGY_MODES[finalKey].label}`);
+    }
+});
+
+// 12. MANUAL OVERRIDE
+bot.onText(/\/manual/i, (msg) => {
+    SYSTEM.autoPilot = false;
+    bot.sendMessage(msg.chat.id, "✋ **MANUAL OVERRIDE:** Auto-Pilot disengaged. Monitoring existing positions only.");
+    if (SYSTEM.activePosition) runProfitMonitor(msg.chat.id);
+});
+
+// 13. RESTART
+bot.onText(/\/restart/i, (msg) => {
+    SYSTEM.autoPilot = false;
+    SYSTEM.isLocked = false;
+    SYSTEM.activePosition = null;
+    SYSTEM.pendingTarget = null;
+    bot.sendMessage(msg.chat.id, `🔄 **SYSTEM RESET COMPLETE**`);
+});
+
+// 14. STATUS
 bot.onText(/\/status/i, async (msg) => {
     if (!wallet) return bot.sendMessage(msg.chat.id, "⚠️ Connect Wallet.");
     const bal = await provider.getBalance(wallet.address);
@@ -525,26 +628,10 @@ bot.onText(/\/status/i, async (msg) => {
 \`————————————————————————————\`
 **Wallet:** \`${ethers.formatEther(bal).substring(0,6)} ETH\`
 **Profit:** ${PLAYER.totalProfitEth.toFixed(4)} ETH
-**Engine:** ${SYSTEM.autoPilot ? '🟢 SCANNING' : '🔴 STANDBY'}
-**Strategy:** ${STRATEGY_MODES[SYSTEM.strategyMode].label}
+**Mode:** ${SYSTEM.autoPilot ? '🟢 SCANNING' : '🔴 STANDBY'}
 **Position:** ${bag}
 \`————————————————————————————\``, { parse_mode: "Markdown" });
 });
 
-// 10. RESTART (Added from v2500)
-bot.onText(/\/restart/i, (msg) => {
-    SYSTEM.autoPilot = false;
-    SYSTEM.isLocked = false;
-    SYSTEM.activePosition = null;
-    SYSTEM.pendingTarget = null;
-    bot.sendMessage(msg.chat.id, `🔄 **SYSTEM RESET COMPLETE**`);
-});
-
-// 11. SELL
-bot.onText(/\/sell/i, async (msg) => {
-    if (SYSTEM.activePosition) await executeSell(msg.chat.id);
-    else bot.sendMessage(msg.chat.id, "No position to sell.");
-});
-
 http.createServer((req, res) => res.end("APEX v6000 ONLINE")).listen(8080);
-console.log("APEX SIGNAL v6000.0 ONLINE [COMPLETE EDITION].".magenta);
+console.log("APEX SIGNAL v6000.0 ONLINE [ULTIMATE EDITION].".magenta);
