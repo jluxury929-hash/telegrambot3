@@ -1,11 +1,11 @@
 /**
  * ===============================================================================
- * APEX PREDATOR: NEURAL ULTRA v9013 (OMNI-PARALLEL SNIPER)
+ * APEX PREDATOR: NEURAL ULTRA v9015 (OMNI-PARALLEL MASTER)
  * ===============================================================================
- * ARCH: Parallel Multi-Worker Engines (5 Simultaneous Chain Snipers)
+ * ARCH: 5-Chain Parallel Workers + Async Monitor Spawning
  * EVM MASTER CONTRACT: 0x5aF9c921984e8694f3E89AE746Cf286fFa3F2610
- * LOGIC: Buy -> Async Monitor Spawn -> Immediate Instant Rescan
- * SPECS: Constant 24/7 Cycle | /setamount | /withdraw | /auto
+ * LOGIC: Instant Rescan + Multi-Chain Simultaneous + Contract Sniping
+ * SPECS: 24/7 Perpetual Hunt | /setamount | /withdraw | /auto
  * ===============================================================================
  */
 
@@ -42,9 +42,10 @@ const NETWORKS = {
 let SYSTEM = { 
     autoPilot: false, 
     tradeAmount: "0.01", 
-    lastTradedTokens: {}, // Cooldowns
-    isLocked: {} // Lock per network during TX
+    lastTradedTokens: {}, 
+    isLocked: {} // Per-network transaction lock
 };
+
 let evmWallet, solWallet;
 const bot = new TelegramBot(process.env.TELEGRAM_TOKEN, { polling: true });
 
@@ -55,56 +56,118 @@ const bot = new TelegramBot(process.env.TELEGRAM_TOKEN, { polling: true });
 bot.onText(/\/auto/, (msg) => {
     SYSTEM.autoPilot = !SYSTEM.autoPilot;
     if (SYSTEM.autoPilot) {
-        bot.sendMessage(msg.chat.id, `🚀 **OMNI-SNIPER ONLINE.** Running 5 Parallel Loops...`);
-        Object.keys(NETWORKS).forEach(netKey => runNetworkSniper(msg.chat.id, netKey));
+        bot.sendMessage(msg.chat.id, `🚀 **OMNI-ENGINE ONLINE.** Spawning 5 Parallel Sniper Threads...`);
+        // Parallel launch for all chains simultaneously
+        Object.keys(NETWORKS).forEach(netKey => startNetworkSniper(msg.chat.id, netKey));
     } else {
-        bot.sendMessage(msg.chat.id, `🤖 **AUTO-PILOT:** OFF`);
+        bot.sendMessage(msg.chat.id, `🤖 **AUTO-PILOT:** DISABLED`);
     }
 });
 
-async function runNetworkSniper(chatId, netKey) {
-    console.log(`[INIT] Sniper Loop for ${netKey} Online`.magenta);
+async function startNetworkSniper(chatId, netKey) {
+    console.log(`[INIT] Parallel Sniper for ${netKey} Online`.magenta);
+    
     while (SYSTEM.autoPilot) {
         try {
-            // SCAN PHASE
+            // Check if network is busy with a transaction
             if (!SYSTEM.isLocked[netKey]) {
-                const signal = await neuralScan(netKey);
+                const signal = await runNeuralSignalScan(netKey);
                 
                 if (signal) {
-                    bot.sendMessage(chatId, `🧠 **[${netKey}] SIGNAL:** ${signal.symbol}. Sniper Engaged.`);
+                    bot.sendMessage(chatId, `🧠 **[${netKey}] SIGNAL:** ${signal.symbol}. Engaging Sniper...`);
                     SYSTEM.isLocked[netKey] = true;
 
-                    // EXECUTE BUY
+                    // EXECUTE BUY (Contract for EVM, Shotgun for SOL)
                     const buyRes = (netKey === 'SOL') 
                         ? await executeSolanaShotgun(signal.tokenAddress, SYSTEM.tradeAmount, 'BUY')
                         : await executeEvmContract(netKey, signal.tokenAddress, SYSTEM.tradeAmount, 'BUY');
 
                     if (buyRes) {
-                        const newPos = { ...signal, entryPrice: signal.price, highestPrice: signal.price, amountOut: buyRes.amountOut };
+                        const newPos = { 
+                            ...signal, 
+                            entryPrice: signal.price, 
+                            highestPrice: signal.price, 
+                            amountOut: buyRes.amountOut 
+                        };
                         
-                        // SPAWN THREADED MONITOR (Async - No Await)
-                        // This allows the loop to return to scanning IMMEDIATELY
-                        startIndependentMonitor(chatId, netKey, newPos);
+                        // SPAWN ASYNC MONITOR (Threaded - No await)
+                        // This is what allows instant rescanning after a buy
+                        startIndependentPeakMonitor(chatId, netKey, newPos);
                         
-                        bot.sendMessage(chatId, `🚀 **[${netKey}] BOUGHT.** Rescanning instantly...`);
+                        bot.sendMessage(chatId, `🚀 **[${netKey}] Sniped ${signal.symbol}.** Rescanning instantly...`);
                     }
                     SYSTEM.isLocked[netKey] = false;
                 }
             }
-            await new Promise(r => setTimeout(r, 3000)); // Fast rescan delay
+            await new Promise(r => setTimeout(r, 2000)); // Ultra-fast scan cycle
         } catch (e) {
             SYSTEM.isLocked[netKey] = false;
-            await new Promise(r => setTimeout(r, 8000));
+            await new Promise(r => setTimeout(r, 5000));
         }
     }
 }
 
 // ==========================================
-//  INDEPENDENT MONITOR (PEAK HUNTING)
+//  EVM CONTRACT EXECUTION (FIXED 0x5aF9...)
 // ==========================================
 
-async function startIndependentMonitor(chatId, netKey, pos) {
-    // This runs in the background for every token you hold
+
+
+async function executeEvmContract(netKey, tokenAddress, amount, direction) {
+    try {
+        const net = NETWORKS[netKey];
+        const provider = new JsonRpcProvider(net.rpc);
+        const signer = evmWallet.connect(provider);
+        const contract = new ethers.Contract(net.executor, APEX_ABI, signer);
+        const deadline = Math.floor(Date.now() / 1000) + 120;
+
+        if (direction === 'BUY') {
+            const tx = await contract.executeBuy(net.router, tokenAddress, 0, deadline, {
+                value: ethers.parseEther(amount.toString()),
+                gasLimit: 350000
+            });
+            await tx.wait();
+            return { amountOut: 1 }; // Placeholder for successful buy
+        } else {
+            // Atomic Sell: Approve + Swap in one call
+            const tx = await contract.executeSell(net.router, tokenAddress, amount, 0, deadline, {
+                gasLimit: 400000
+            });
+            await tx.wait();
+            return { hash: tx.hash };
+        }
+    } catch (e) { return null; }
+}
+
+// ==========================================
+//  SVM SHOTGUN EXECUTION (SOLANA)
+// ==========================================
+
+async function executeSolanaShotgun(tokenAddress, amount, direction) {
+    try {
+        const amtStr = direction === 'BUY' ? Math.floor(amount * LAMPORTS_PER_SOL).toString() : amount.toString();
+        const res = await axios.get(`${JUP_ULTRA_API}/order?inputMint=So11111111111111111111111111111111111111112&outputMint=${tokenAddress}&amount=${amtStr}&taker=${solWallet.publicKey.toString()}&slippageBps=200`, { headers: {'x-api-key': JUP_API_KEY}});
+        
+        const tx = VersionedTransaction.deserialize(Buffer.from(res.data.transaction, 'base64'));
+        tx.sign([solWallet]);
+        const signedRaw = tx.serialize();
+
+        const tasks = [
+            axios.post(`${JUP_ULTRA_API}/execute`, { signedTransaction: Buffer.from(signedRaw).toString('base64'), requestId: res.data.requestId }, { headers: {'x-api-key': JUP_API_KEY}}),
+            new Connection(NETWORKS.SOL.shotgun[0]).sendRawTransaction(signedRaw, { skipPreflight: true })
+        ];
+
+        const fastest = await Promise.any(tasks);
+        return { amountOut: res.data.outAmount, hash: fastest.data?.signature || fastest };
+    } catch (e) { return null; }
+}
+
+// ==========================================
+//  INDEPENDENT PEAK MONITOR (THREADED)
+// ==========================================
+
+async function startIndependentPeakMonitor(chatId, netKey, pos) {
+    // Spawns a background thread for every single position held
     try {
         const res = await axios.get(`https://api.dexscreener.com/latest/dex/tokens/${pos.tokenAddress}`);
         const currentPrice = parseFloat(res.data.pairs[0].priceUsd);
@@ -113,105 +176,60 @@ async function startIndependentMonitor(chatId, netKey, pos) {
         if (currentPrice > pos.highestPrice) pos.highestPrice = currentPrice;
         const drop = ((pos.highestPrice - currentPrice) / pos.highestPrice) * 100;
 
-        // EXIT LOGIC: Trailing Stop @ 6% | Take Profit @ 25% | Stop Loss @ 10%
+        // PEAK EXIT: Trailing Stop @ 6% | Take Profit @ 25% | Stop Loss @ 10%
         if (pnl >= 25 || drop >= 6 || pnl <= -10) {
-            bot.sendMessage(chatId, `📉 **[${netKey}] PEAK REACHED:** ${pos.symbol} at ${pnl.toFixed(2)}%. Selling...`);
+            bot.sendMessage(chatId, `📉 **[${netKey}] PEAK REACHED:** Selling ${pos.symbol} at ${pnl.toFixed(2)}%`);
             
             const sold = (netKey === 'SOL')
                 ? await executeSolanaShotgun(pos.tokenAddress, pos.amountOut, 'SELL')
                 : await executeEvmContract(netKey, pos.tokenAddress, pos.amountOut, 'SELL');
 
             if (sold) {
-                SYSTEM.lastTradedTokens[netKey] = pos.tokenAddress;
-                bot.sendMessage(chatId, `✅ **[${netKey}] PROFIT SECURED:** ${pos.symbol}`);
+                SYSTEM.lastTradedTokens[pos.tokenAddress] = true;
+                bot.sendMessage(chatId, `✅ **[${netKey}] CLOSED:** ${pos.symbol}. Profit Secured.`);
             }
         } else {
-            // Check again in 4 seconds
-            setTimeout(() => startIndependentMonitor(chatId, netKey, pos), 4000);
+            setTimeout(() => startIndependentPeakMonitor(chatId, netKey, pos), 4000);
         }
     } catch(e) {
-        setTimeout(() => startIndependentMonitor(chatId, netKey, pos), 5000);
+        setTimeout(() => startIndependentPeakMonitor(chatId, netKey, pos), 5000);
     }
-}
-
-// ==========================================
-//  EVM CONTRACT (FIXED 0x5aF9...)
-// ==========================================
-
-async function executeEvmContract(netKey, addr, amt, dir) {
-    try {
-        const net = NETWORKS[netKey];
-        const prov = new JsonRpcProvider(net.rpc);
-        const sign = evmWallet.connect(prov);
-        const contract = new ethers.Contract(net.executor, APEX_ABI, sign);
-        const deadline = Math.floor(Date.now() / 1000) + 120;
-
-        if (dir === 'BUY') {
-            const tx = await contract.executeBuy(net.router, addr, 0, deadline, { value: ethers.parseEther(amt.toString()), gasLimit: 300000 });
-            await tx.wait();
-            return { amountOut: 1 }; 
-        } else {
-            const tx = await contract.executeSell(net.router, addr, amt, 0, deadline, { gasLimit: 350000 });
-            await tx.wait();
-            return { hash: tx.hash };
-        }
-    } catch (e) { return null; }
-}
-
-// ==========================================
-//  SOLANA SHOTGUN
-// ==========================================
-
-async function executeSolanaShotgun(addr, amt, dir) {
-    try {
-        const amtStr = dir === 'BUY' ? Math.floor(amt * LAMPORTS_PER_SOL).toString() : amt.toString();
-        const res = await axios.get(`${JUP_ULTRA_API}/order?inputMint=So11111111111111111111111111111111111111112&outputMint=${addr}&amount=${amtStr}&taker=${solWallet.publicKey.toString()}&slippageBps=200`, { headers: {'x-api-key': JUP_API_KEY}});
-        const tx = VersionedTransaction.deserialize(Buffer.from(res.data.transaction, 'base64'));
-        tx.sign([solWallet]);
-        const signedRaw = tx.serialize();
-        const tasks = [
-            axios.post(`${JUP_ULTRA_API}/execute`, { signedTransaction: Buffer.from(signedRaw).toString('base64'), requestId: res.data.requestId }, { headers: {'x-api-key': JUP_API_KEY}}),
-            new Connection(NETWORKS.SOL.shotgun[0]).sendRawTransaction(signedRaw, { skipPreflight: true })
-        ];
-        const fastest = await Promise.any(tasks);
-        return { amountOut: res.data.outAmount, hash: fastest.data?.signature || fastest };
-    } catch (e) { return null; }
 }
 
 // ==========================================
 //  AI SCANNER & COMMANDS
 // ==========================================
 
-async function neuralScan(netKey) {
+async function runNeuralSignalScan(netKey) {
     const net = NETWORKS[netKey];
     try {
         const res = await axios.get('https://api.dexscreener.com/token-boosts/top/v1');
-        const match = res.data.find(t => t.chainId === net.id && t.tokenAddress !== SYSTEM.lastTradedTokens[netKey]);
+        const match = res.data.find(t => t.chainId === net.id && !SYSTEM.lastTradedTokens[t.tokenAddress]);
         if (match) {
             const details = await axios.get(`https://api.dexscreener.com/latest/dex/tokens/${match.tokenAddress}`);
             const pair = details.data.pairs[0];
-            if (pair && pair.liquidity.usd > 5000) {
+            if (pair && pair.liquidity.usd > 5000 && pair.volume.h24 > 30000) {
                 return { symbol: pair.baseToken.symbol, tokenAddress: match.tokenAddress, price: parseFloat(pair.priceUsd) };
             }
         }
     } catch (e) { return null; }
 }
 
-bot.onText(/\/setamount (.+)/, (msg, match) => { SYSTEM.tradeAmount = match[1]; bot.sendMessage(msg.chat.id, `💰 **TRADE SIZE:** ${SYSTEM.tradeAmount}`); });
+bot.onText(/\/setamount (.+)/, (msg, match) => { SYSTEM.tradeAmount = match[1]; bot.sendMessage(msg.chat.id, `💰 **SIZE:** ${SYSTEM.tradeAmount}`); });
+
 bot.onText(/\/withdraw (.+)/, async (msg, match) => {
     const target = match[1].toLowerCase() === 'eth' ? "0x0000000000000000000000000000000000000000" : match[1];
-    const provider = new JsonRpcProvider(NETWORKS['BASE'].rpc); // Default to Base for contract comms
-    const contract = new ethers.Contract(MY_EXECUTOR, APEX_ABI, evmWallet.connect(provider));
+    const contract = new ethers.Contract(MY_EXECUTOR, APEX_ABI, evmWallet.connect(new JsonRpcProvider(NETWORKS.BASE.rpc)));
     const tx = await contract.emergencyWithdraw(target);
     bot.sendMessage(msg.chat.id, `🚨 **WITHDRAW SENT:** ${tx.hash}`);
 });
 
 bot.onText(/\/connect (.+)/, async (msg, match) => {
-    const raw = match[1].trim();
-    evmWallet = ethers.HDNodeWallet.fromPhrase(raw);
-    solWallet = Keypair.fromSeed(derivePath("m/44'/501'/0'/0'", bip39.mnemonicToSeedSync(raw).toString('hex')).key);
-    bot.sendMessage(msg.chat.id, `🔗 **NEURAL LINK SECURE.**`);
+    const seed = bip39.mnemonicToSeedSync(match[1].trim());
+    evmWallet = ethers.HDNodeWallet.fromPhrase(match[1].trim());
+    solWallet = Keypair.fromSeed(derivePath("m/44'/501'/0'/0'", seed.toString('hex')).key);
+    bot.sendMessage(msg.chat.id, `🔗 **NEURAL LINK SECURE.** Sniper threads ready.`);
 });
 
-http.createServer((req, res) => res.end("APEX v9013 ONLINE")).listen(8080);
-console.log("APEX v9013 OMNI-SNIPER MASTER READY".magenta);
+http.createServer((req, res) => res.end("APEX v9015 ONLINE")).listen(8080);
+console.log("APEX v9015 OMNI-MASTER ENGINE READY".magenta);
