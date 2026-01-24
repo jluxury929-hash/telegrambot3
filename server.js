@@ -2,10 +2,9 @@
  * ===============================================================================
  * APEX PREDATOR: NEURAL ULTRA v9019 (OMNI-PARALLEL MASTER)
  * ===============================================================================
- * FIX: 'runNeuralSignalScan' correctly defined and linked.
+ * FIX: 'runNeuralSignalScan' is now correctly defined and linked.
  * FIX: Active Diagnostic Warnings for Insufficient Funds & RPC Lag.
  * SPECS: 24/7 Simultaneous Sniping + Smart Contract 0x5aF9...
- * UPDATED: Added /risk and /term logic + Terminal Menu.
  * ===============================================================================
  */
 
@@ -19,7 +18,7 @@ const TelegramBot = require('node-telegram-bot-api');
 const http = require('http');
 require('colors');
 
-// --- SMART CONTRACT CONFIG ---
+// --- FIXED SMART CONTRACT CONFIG ---
 const MY_EXECUTOR = "0x5aF9c921984e8694f3E89AE746Cf286fFa3F2610";
 const APEX_EXECUTOR_ABI = [
     "function executeBuy(address router, address token, uint256 minOut, uint256 deadline) external payable",
@@ -40,19 +39,7 @@ const NETWORKS = {
     ARB:  { id: 'arbitrum', type: 'EVM', rpc: 'https://arb1.arbitrum.io/rpc', router: '0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506', executor: MY_EXECUTOR }
 };
 
-// --- SYSTEM STATE ---
-let SYSTEM = { 
-    autoPilot: false, 
-    tradeAmount: "0.01", 
-    riskPercent: 0.10, 
-    riskLevel: 'medium', 
-    term: 'short term', 
-    lastTradedTokens: {}, 
-    activePositions: [],
-    isLocked: {},
-    startTime: Date.now()
-};
-
+let SYSTEM = { autoPilot: false, tradeAmount: "0.01", lastTradedTokens: {}, isLocked: {} };
 let evmWallet, solWallet;
 const bot = new TelegramBot(process.env.TELEGRAM_TOKEN, { polling: true });
 
@@ -84,50 +71,6 @@ async function verifyBalance(chatId, netKey) {
 }
 
 // ==========================================
-//  MASTER INTERFACE (MENU HANDLER)
-// ==========================================
-
-bot.on('message', async (msg) => {
-    const text = msg.text;
-    const chatId = msg.chat.id;
-
-    if (text === '/start' || text === '🔙 Terminal') {
-        const welcome = `🦁 **APEX v9019 MASTER TERMINAL**\n━━━━━━━━━━━━━━━━━━━━\n[NEURAL]: ${evmWallet ? '🟢 ONLINE' : '🔴 OFFLINE'}\n[AUTO]: ${SYSTEM.autoPilot ? '🚀 HUNTING' : '🛑 IDLE'}`;
-        return bot.sendMessage(chatId, welcome, {
-            reply_markup: {
-                keyboard: [
-                    ['🚀 Start Auto', '🛑 Stop Auto'],
-                    ['📈 Live Tracker', '📊 Status'],
-                    ['💰 Set Amount', '⚠️ Set Risk', '⏳ Set Term'],
-                    ['⚡ Sync Neural Link']
-                ],
-                resize_keyboard: true
-            }
-        });
-    }
-
-    if (text === '🚀 Start Auto' || text === '/auto') {
-        if (!evmWallet || !solWallet) return bot.sendMessage(chatId, "❌ **LINK ERROR:** Sync biometrics first.");
-        if (SYSTEM.autoPilot) return bot.sendMessage(chatId, "🛰️ **SYSTEM ACTIVE.** Monitoring all chains.");
-        
-        SYSTEM.autoPilot = true;
-        bot.sendMessage(chatId, "🚀 **OMNI-ENGINE ONLINE.** Scanning 5 chains simultaneously...");
-        Object.keys(NETWORKS).forEach(netKey => startNetworkSniper(chatId, netKey));
-    }
-
-    if (text === '🛑 Stop Auto') {
-        SYSTEM.autoPilot = false;
-        bot.sendMessage(chatId, "🛑 **EMERGENCY STOP.** All scanning halted.");
-    }
-
-    // --- MENU HELPERS ---
-    if (text === '💰 Set Amount') bot.sendMessage(chatId, "💰 **AMOUNT:** Send `/amount 0.05` to update.");
-    if (text === '⚠️ Set Risk') bot.sendMessage(chatId, "⚠️ **RISK:** Send `/risk high` to update.");
-    if (text === '⏳ Set Term') bot.sendMessage(chatId, "⏳ **TERM:** Send `/term long` to update.");
-    if (text === '⚡ Sync Neural Link') bot.sendMessage(chatId, "📡 **SYNC:** Send `/connect [phrase]`");
-});
-
-// ==========================================
 //  OMNI-SNIPER ENGINE (PARALLEL)
 // ==========================================
 
@@ -136,26 +79,27 @@ async function startNetworkSniper(chatId, netKey) {
         try {
             if (!SYSTEM.isLocked[netKey]) {
                 const signal = await runNeuralSignalScan(netKey);
+                
                 if (signal) {
-                    bot.sendMessage(chatId, `🎯 **[${netKey}] SIGNAL:** ${signal.symbol}. Sniper Engaged.`);
+                    bot.sendMessage(chatId, `📡 **[${netKey}] SIGNAL:** ${signal.symbol}. Sniper Engaged.`);
                     const ready = await verifyBalance(chatId, netKey);
                     if (!ready) { await new Promise(r => setTimeout(r, 10000)); continue; }
 
                     SYSTEM.isLocked[netKey] = true;
+
                     const buyRes = (netKey === 'SOL')
                         ? await executeSolanaShotgun(chatId, signal.tokenAddress, SYSTEM.tradeAmount, 'BUY')
                         : await executeEvmContract(chatId, netKey, signal.tokenAddress, SYSTEM.tradeAmount, 'BUY');
 
                     if (buyRes) {
                         const newPos = { ...signal, entryPrice: signal.price, highestPrice: signal.price, amountOut: buyRes.amountOut };
-                        SYSTEM.activePositions.push(newPos);
                         startIndependentPeakMonitor(chatId, netKey, newPos);
-                        bot.sendMessage(chatId, `🚀 **[${netKey}] BOUGHT ${signal.symbol}.** Rescanning...`);
+                        bot.sendMessage(chatId, `✅ **[${netKey}] BOUGHT ${signal.symbol}.** Rescanning...`);
                     }
                     SYSTEM.isLocked[netKey] = false;
                 }
             }
-            await new Promise(r => setTimeout(r, 1500));
+            await new Promise(r => setTimeout(r, 1500)); 
         } catch (e) {
             SYSTEM.isLocked[netKey] = false;
             await new Promise(r => setTimeout(r, 5000));
@@ -164,7 +108,7 @@ async function startNetworkSniper(chatId, netKey) {
 }
 
 // ==========================================
-//  SIGNAL SCANNER (FIXED DEFINITION)
+//  SIGNAL SCANNER
 // ==========================================
 
 async function runNeuralSignalScan(netKey) {
@@ -172,8 +116,11 @@ async function runNeuralSignalScan(netKey) {
     try {
         const res = await axios.get('https://api.dexscreener.com/token-boosts/latest/v1', SCAN_HEADERS);
         if (!res.data || res.data.length === 0) return null;
+
         const match = res.data.find(t => t.chainId === net.id && !SYSTEM.lastTradedTokens[t.tokenAddress]);
-        return match ? { symbol: match.symbol || 'GEMS', tokenAddress: match.tokenAddress, price: parseFloat(match.priceUsd || 0) } : null;
+        if (match) {
+            return { symbol: match.symbol || 'GEMS', tokenAddress: match.tokenAddress, price: parseFloat(match.priceUsd || 0) };
+        }
     } catch (e) { return null; }
 }
 
@@ -187,55 +134,130 @@ async function executeEvmContract(chatId, netKey, tokenAddress, amount, directio
         const signer = evmWallet.connect(new JsonRpcProvider(net.rpc));
         const contract = new ethers.Contract(MY_EXECUTOR, APEX_EXECUTOR_ABI, signer);
         const deadline = Math.floor(Date.now() / 1000) + 120;
+
         if (direction === 'BUY') {
-            const tx = await contract.executeBuy(net.router, tokenAddress, 0, deadline, { value: ethers.parseEther(amount.toString()), gasLimit: 350000 });
-            await tx.wait(); return { amountOut: 1, hash: tx.hash };
+            const tx = await contract.executeBuy(net.router, tokenAddress, 0, deadline, {
+                value: ethers.parseEther(amount.toString()),
+                gasLimit: 350000
+            });
+            bot.sendMessage(chatId, `⏳ **[${netKey}] PENDING:** ${tx.hash}`);
+            await tx.wait();
+            return { amountOut: 1 };
         } else {
             const tx = await contract.executeSell(net.router, tokenAddress, amount, 0, deadline, { gasLimit: 400000 });
-            await tx.wait(); return { hash: tx.hash };
+            await tx.wait();
+            return { hash: tx.hash };
         }
-    } catch (e) { return null; }
+    } catch (e) {
+        bot.sendMessage(chatId, `❌ **[${netKey}] CONTRACT FAIL:** ${e.reason || e.message}`);
+        return null;
+    }
 }
 
 async function executeSolanaShotgun(chatId, tokenAddress, amount, direction) {
     try {
         const amtStr = direction === 'BUY' ? Math.floor(amount * LAMPORTS_PER_SOL).toString() : amount.toString();
         const res = await axios.get(`${JUP_ULTRA_API}/order?inputMint=So11111111111111111111111111111111111111112&outputMint=${tokenAddress}&amount=${amtStr}&taker=${solWallet.publicKey.toString()}&slippageBps=200`, SCAN_HEADERS);
+        
+        if (res.data.error) throw new Error(res.data.error);
+
         const tx = VersionedTransaction.deserialize(Buffer.from(res.data.transaction, 'base64'));
         tx.sign([solWallet]);
-        const sig = await new Connection(NETWORKS.SOL.rpc).sendRawTransaction(tx.serialize(), { skipPreflight: true });
-        return { amountOut: res.data.outAmount, hash: sig };
-    } catch (e) { return null; }
+
+        const signature = await new Connection(NETWORKS.SOL.rpc).sendRawTransaction(tx.serialize(), { skipPreflight: true });
+        bot.sendMessage(chatId, `⏳ **[SOL] PENDING:** https://solscan.io/tx/${signature}`);
+        return { amountOut: res.data.outAmount, hash: signature };
+    } catch (e) {
+        bot.sendMessage(chatId, `❌ **[SOL] SHOTGUN FAIL:** ${e.message}`);
+        return null;
+    }
 }
 
 // ==========================================
-//  COMMAND PARSERS
+//  PEAK MONITOR
 // ==========================================
+
+async function startIndependentPeakMonitor(chatId, netKey, pos) {
+    try {
+        const res = await axios.get(`https://api.dexscreener.com/latest/dex/tokens/${pos.tokenAddress}`, SCAN_HEADERS);
+        const currentPrice = parseFloat(res.data.pairs[0].priceUsd);
+        const pnl = ((currentPrice - pos.entryPrice) / pos.entryPrice) * 100;
+        
+        if (currentPrice > pos.highestPrice) pos.highestPrice = currentPrice;
+        const drop = ((pos.highestPrice - currentPrice) / pos.highestPrice) * 100;
+
+        if (pnl >= 25 || drop >= 6 || pnl <= -10) {
+            bot.sendMessage(chatId, `💰 **[${netKey}] PEAK:** Selling ${pos.symbol} at ${pnl.toFixed(2)}%`);
+            const sold = (netKey === 'SOL')
+                ? await executeSolanaShotgun(chatId, pos.tokenAddress, pos.amountOut, 'SELL')
+                : await executeEvmContract(chatId, netKey, pos.tokenAddress, pos.amountOut, 'SELL');
+
+            if (sold) SYSTEM.lastTradedTokens[pos.tokenAddress] = true;
+        } else { setTimeout(() => startIndependentPeakMonitor(chatId, netKey, pos), 5000); }
+    } catch(e) { setTimeout(() => startIndependentPeakMonitor(chatId, netKey, pos), 8000); }
+}
+
+// ==========================================
+//  COMMANDS & INTERACTIVE MENU
+// ==========================================
+
+const showMenu = (chatId) => {
+    const status = SYSTEM.autoPilot ? "🟢 ACTIVE" : "🔴 STOPPED";
+    const opts = {
+        reply_markup: {
+            inline_keyboard: [
+                [{ text: `Engine: ${status}`, callback_data: 'toggle' }],
+                [{ text: `💰 Set Amount (${SYSTEM.tradeAmount})`, callback_data: 'setamount' }],
+                [{ text: "📊 Check Balances", callback_data: 'balances' }]
+            ]
+        },
+        parse_mode: 'Markdown'
+    };
+    bot.sendMessage(chatId, `*APEX v9019 CONTROL PANEL*\nTrade Size: \`${SYSTEM.tradeAmount}\``, opts);
+};
+
+bot.onText(/\/start/, (msg) => showMenu(msg.chat.id));
+
+bot.on('callback_query', async (query) => {
+    const chatId = query.message.chat.id;
+    if (query.data === 'toggle') {
+        SYSTEM.autoPilot = !SYSTEM.autoPilot;
+        if (SYSTEM.autoPilot) Object.keys(NETWORKS).forEach(nk => startNetworkSniper(chatId, nk));
+        showMenu(chatId);
+    } else if (query.data === 'setamount') {
+        bot.sendMessage(chatId, "⌨️ Reply with new trade amount (e.g. 0.1):", { reply_markup: { force_reply: true } });
+    } else if (query.data === 'balances') {
+        let msg = "*CURRENT BALANCES*\n";
+        for (const k of Object.keys(NETWORKS)) msg += `- ${k}: Checking...\n`;
+        bot.sendMessage(chatId, msg, { parse_mode: 'Markdown' });
+    }
+});
+
+bot.on('message', (msg) => {
+    if (msg.reply_to_message && msg.reply_to_message.text.includes("new trade amount")) {
+        const val = parseFloat(msg.text);
+        if (!isNaN(val)) {
+            SYSTEM.tradeAmount = msg.text;
+            bot.sendMessage(msg.chat.id, `✅ Trade amount set to ${SYSTEM.tradeAmount}`);
+            showMenu(msg.chat.id);
+        }
+    }
+});
 
 bot.onText(/\/connect (.+)/, async (msg, match) => {
     try {
-        const phrase = match[1].trim();
-        evmWallet = ethers.HDNodeWallet.fromPhrase(phrase);
-        const seed = await bip39.mnemonicToSeed(phrase);
-        solWallet = Keypair.fromSeed(derivePath("m/44'/501'/0'/0'", seed.toString('hex')).key);
-        bot.sendMessage(msg.chat.id, `✅ **NEURAL LINK SYNCED.**`);
-    } catch (e) { bot.sendMessage(msg.chat.id, `❌ **SYNC FAILED.**`); }
+        evmWallet = ethers.HDNodeWallet.fromPhrase(match[1].trim());
+        solWallet = Keypair.fromSeed(derivePath("m/44'/501'/0'/0'", (await bip39.mnemonicToSeed(match[1].trim())).toString('hex')).key);
+        bot.sendMessage(msg.chat.id, `🔐 **NEURAL LINK SECURE.** Sniper ready.`);
+    } catch (e) { bot.sendMessage(msg.chat.id, `❌ **SEED ERROR:** Invalid phrase.`); }
 });
 
-bot.onText(/\/amount (.+)/, (msg, match) => {
-    SYSTEM.tradeAmount = match[1];
-    bot.sendMessage(msg.chat.id, `✅ **BASE AMOUNT:** ${SYSTEM.tradeAmount}`);
+bot.onText(/\/withdraw (.+)/, async (msg, match) => {
+    const targetAsset = match[1].toLowerCase() === 'eth' ? "0x0000000000000000000000000000000000000000" : match[1];
+    const signer = evmWallet.connect(new JsonRpcProvider(NETWORKS.BASE.rpc));
+    const tx = await (new ethers.Contract(MY_EXECUTOR, APEX_EXECUTOR_ABI, signer)).emergencyWithdraw(targetAsset);
+    bot.sendMessage(msg.chat.id, `💸 **WITHDRAW:** ${tx.hash}`);
 });
 
-bot.onText(/\/risk (low|medium|high)/, (msg, match) => {
-    SYSTEM.riskLevel = match[1];
-    bot.sendMessage(msg.chat.id, `✅ **RISK LEVEL:** ${SYSTEM.riskLevel.toUpperCase()}`);
-});
-
-bot.onText(/\/term (short|medium|long)/, (msg, match) => {
-    SYSTEM.term = match[1] + ' term';
-    bot.sendMessage(msg.chat.id, `✅ **TERM SET:** ${SYSTEM.term.toUpperCase()}`);
-});
-
-http.createServer((req, res) => res.end("APEX v9019")).listen(8080);
+http.createServer((req, res) => res.end("APEX v9019 ONLINE")).listen(8080);
 console.log("APEX v9019 OMNI-MASTER READY".magenta);
