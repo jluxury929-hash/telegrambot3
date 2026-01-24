@@ -1,10 +1,10 @@
 /**
  * ===============================================================================
- * APEX PREDATOR: NEURAL ULTRA v9024 (OMNI-PARALLEL MASTER)
+ * APEX PREDATOR: NEURAL ULTRA v9019 (OMNI-PARALLEL MASTER)
  * ===============================================================================
- * FIX: /auto polling conflict protection (Graceful Polling Recovery)
- * FIX: Mnemonic length guard (Prevents TypeError on bad seed input)
- * LOGIC: Parallel Chain Workers -> Neural Scanning -> Smart Execution
+ * FIX: 'runNeuralSignalScan' is now correctly defined and linked.
+ * FIX: Active Diagnostic Warnings for Insufficient Funds & RPC Lag.
+ * SPECS: 24/7 Simultaneous Sniping + Smart Contract 0x5aF9...
  * ===============================================================================
  */
 
@@ -18,15 +18,16 @@ const TelegramBot = require('node-telegram-bot-api');
 const http = require('http');
 require('colors');
 
-// --- FIXED CONFIG ---
+// --- FIXED SMART CONTRACT CONFIG ---
 const MY_EXECUTOR = "0x5aF9c921984e8694f3E89AE746Cf286fFa3F2610";
-const APEX_ABI = [
+const APEX_EXECUTOR_ABI = [
     "function executeBuy(address router, address token, uint256 minOut, uint256 deadline) external payable",
     "function executeSell(address router, address token, uint256 amtIn, uint256 minOut, uint256 deadline) external",
     "function emergencyWithdraw(address token) external"
 ];
+
 const JUP_ULTRA_API = "https://api.jup.ag/ultra/v1";
-const JUP_API_KEY = "f440d4df-b5c4-4020-a960-ac182d3752ab"; 
+const JUP_API_KEY = "f440d4df-b5c4-4020-a960-ac182d3752ab";
 const SCAN_HEADERS = { headers: { 'User-Agent': 'Mozilla/5.0', 'x-api-key': JUP_API_KEY }};
 
 // --- 5-CHAIN NETWORK DEFINITIONS ---
@@ -40,64 +41,76 @@ const NETWORKS = {
 
 let SYSTEM = { autoPilot: false, tradeAmount: "0.01", lastTradedTokens: {}, isLocked: {} };
 let evmWallet, solWallet;
-
-// --- FIX: TELEGRAM POLLING CONFLICT GUARD ---
 const bot = new TelegramBot(process.env.TELEGRAM_TOKEN, { polling: true });
 
-bot.on('polling_error', (error) => {
-    if (error.code === 'ETELEGRAM' && error.message.includes('409 Conflict')) {
-        console.warn(`[SYSTEM] Update conflict! Ensure no other bot instances are running.`.yellow);
-    }
-});
+// ==========================================
+//  DIAGNOSTIC BALANCE CHECKER
+// ==========================================
+
+async function verifyBalance(chatId, netKey) {
+    try {
+        if (netKey === 'SOL') {
+            const conn = new Connection(NETWORKS.SOL.rpc);
+            const bal = await conn.getBalance(solWallet.publicKey);
+            const needed = (parseFloat(SYSTEM.tradeAmount) * LAMPORTS_PER_SOL) + 10000000;
+            if (bal < needed) {
+                bot.sendMessage(chatId, `⚠️ **[SOL] WARNING:** Insufficient Balance. Have ${bal/LAMPORTS_PER_SOL}, need ${needed/LAMPORTS_PER_SOL} SOL.`);
+                return false;
+            }
+        } else {
+            const prov = new JsonRpcProvider(NETWORKS[netKey].rpc);
+            const bal = await prov.getBalance(evmWallet.address);
+            const needed = ethers.parseEther(SYSTEM.tradeAmount) + ethers.parseEther("0.005");
+            if (bal < needed) {
+                bot.sendMessage(chatId, `⚠️ **[${netKey}] WARNING:** Insufficient ETH/BNB for trade + gas.`);
+                return false;
+            }
+        }
+        return true;
+    } catch (e) { return false; }
+}
 
 // ==========================================
-//  OMNI-SNIPER ENGINE (/auto Logic)
+//  OMNI-SNIPER ENGINE (PARALLEL)
 // ==========================================
 
 bot.onText(/\/auto/, (msg) => {
-    if (!evmWallet || !solWallet) return bot.sendMessage(msg.chat.id, "❌ **WALLET NOT FOUND:** Use `/connect` first.");
-    
     SYSTEM.autoPilot = !SYSTEM.autoPilot;
     if (SYSTEM.autoPilot) {
         bot.sendMessage(msg.chat.id, `🚀 **OMNI-ENGINE ONLINE.** Scanning 5 chains simultaneously...`);
-        // Start parallel workers
         Object.keys(NETWORKS).forEach(netKey => startNetworkSniper(msg.chat.id, netKey));
-    } else { 
-        bot.sendMessage(msg.chat.id, `🤖 **AUTO-PILOT OFF.**`); 
-    }
+    } else { bot.sendMessage(msg.chat.id, `🤖 **AUTO-PILOT OFF.**`); }
 });
 
 async function startNetworkSniper(chatId, netKey) {
-    console.log(`[INIT] Parallel thread for ${netKey} active.`.magenta);
     while (SYSTEM.autoPilot) {
         try {
             if (!SYSTEM.isLocked[netKey]) {
+                // FIXED: Function name now matches definition below
                 const signal = await runNeuralSignalScan(netKey);
-                
+               
                 if (signal) {
-                    bot.sendMessage(chatId, `🧠 **[${netKey}] SIGNAL:** ${signal.symbol}. Engaging Sniper.`);
-                    
+                    bot.sendMessage(chatId, `🧠 **[${netKey}] SIGNAL:** ${signal.symbol}. Sniper Engaged.`);
+                   
+                    // Pre-Buy Balance Diagnostic
                     const ready = await verifyBalance(chatId, netKey);
-                    if (!ready) { 
-                        await new Promise(r => setTimeout(r, 15000)); // Wait longer if broke
-                        continue; 
-                    }
+                    if (!ready) { await new Promise(r => setTimeout(r, 10000)); continue; }
 
                     SYSTEM.isLocked[netKey] = true;
 
-                    const buyRes = (netKey === 'SOL') 
+                    const buyRes = (netKey === 'SOL')
                         ? await executeSolanaShotgun(chatId, signal.tokenAddress, SYSTEM.tradeAmount, 'BUY')
                         : await executeEvmContract(chatId, netKey, signal.tokenAddress, SYSTEM.tradeAmount, 'BUY');
 
                     if (buyRes) {
                         const newPos = { ...signal, entryPrice: signal.price, highestPrice: signal.price, amountOut: buyRes.amountOut };
                         startIndependentPeakMonitor(chatId, netKey, newPos);
-                        bot.sendMessage(chatId, `🚀 **[${netKey}] BOUGHT ${signal.symbol}.** Monitoring for peak...`);
+                        bot.sendMessage(chatId, `🚀 **[${netKey}] BOUGHT ${signal.symbol}.** Rescanning instantly...`);
                     }
                     SYSTEM.isLocked[netKey] = false;
                 }
             }
-            await new Promise(r => setTimeout(r, 2000)); // Rate limit safety
+            await new Promise(r => setTimeout(r, 1500)); // 1.5s scan interval
         } catch (e) {
             SYSTEM.isLocked[netKey] = false;
             await new Promise(r => setTimeout(r, 5000));
@@ -123,102 +136,76 @@ async function runNeuralSignalScan(netKey) {
 }
 
 // ==========================================
-//  DIAGNOSTIC BALANCE CHECKER
+//  EXECUTION LOGIC (CONTRACT + SHOTGUN)
 // ==========================================
 
-async function verifyBalance(chatId, netKey) {
-    try {
-        if (netKey === 'SOL') {
-            const conn = new Connection(NETWORKS.SOL.rpc);
-            const bal = await conn.getBalance(solWallet.publicKey);
-            const needed = (parseFloat(SYSTEM.tradeAmount) * LAMPORTS_PER_SOL) + 10000000; 
-            if (bal < needed) {
-                bot.sendMessage(chatId, `⚠️ **[SOL] WARNING:** Insufficient Balance. Need ~${needed/LAMPORTS_PER_SOL} SOL.`);
-                return false;
-            }
-        } else {
-            const prov = new JsonRpcProvider(NETWORKS[netKey].rpc);
-            const bal = await prov.getBalance(evmWallet.address);
-            const needed = ethers.parseEther(SYSTEM.tradeAmount) + ethers.parseEther("0.005");
-            if (bal < needed) {
-                bot.sendMessage(chatId, `⚠️ **[${netKey}] WARNING:** Insufficient Gas/Trade amount.`);
-                return false;
-            }
-        }
-        return true;
-    } catch (e) { return false; }
-}
-
-// ==========================================
-//  EXECUTION LOGIC
-// ==========================================
-
-async function executeEvmContract(chatId, netKey, addr, amt, dir) {
+async function executeEvmContract(chatId, netKey, tokenAddress, amount, direction) {
     try {
         const net = NETWORKS[netKey];
         const signer = evmWallet.connect(new JsonRpcProvider(net.rpc));
-        const contract = new ethers.Contract(MY_EXECUTOR, APEX_ABI, signer);
+        const contract = new ethers.Contract(MY_EXECUTOR, APEX_EXECUTOR_ABI, signer);
         const deadline = Math.floor(Date.now() / 1000) + 120;
 
-        if (dir === 'BUY') {
-            const tx = await contract.executeBuy(net.router, addr, 0, deadline, {
-                value: ethers.parseEther(amt.toString()),
+        if (direction === 'BUY') {
+            const tx = await contract.executeBuy(net.router, tokenAddress, 0, deadline, {
+                value: ethers.parseEther(amount.toString()),
                 gasLimit: 350000
             });
             bot.sendMessage(chatId, `⏳ **[${netKey}] PENDING:** ${tx.hash}`);
             await tx.wait();
             return { amountOut: 1 };
         } else {
-            const tx = await contract.executeSell(net.router, addr, amt, 0, deadline, { gasLimit: 400000 });
+            const tx = await contract.executeSell(net.router, tokenAddress, amount, 0, deadline, { gasLimit: 400000 });
             await tx.wait();
             return { hash: tx.hash };
         }
     } catch (e) {
-        bot.sendMessage(chatId, `❌ **[${netKey}] FAIL:** ${e.reason || e.message}`);
+        bot.sendMessage(chatId, `❌ **[${netKey}] CONTRACT FAIL:** ${e.reason || e.message}`);
         return null;
     }
 }
 
-async function executeSolanaShotgun(chatId, addr, amt, dir) {
+async function executeSolanaShotgun(chatId, tokenAddress, amount, direction) {
     try {
-        const amtStr = dir === 'BUY' ? Math.floor(amt * LAMPORTS_PER_SOL).toString() : amt.toString();
-        const res = await axios.get(`${JUP_ULTRA_API}/order?inputMint=So11111111111111111111111111111111111111112&outputMint=${addr}&amount=${amtStr}&taker=${solWallet.publicKey.toString()}&slippageBps=200`, SCAN_HEADERS);
+        const amtStr = direction === 'BUY' ? Math.floor(amount * LAMPORTS_PER_SOL).toString() : amount.toString();
+        const res = await axios.get(`${JUP_ULTRA_API}/order?inputMint=So11111111111111111111111111111111111111112&outputMint=${tokenAddress}&amount=${amtStr}&taker=${solWallet.publicKey.toString()}&slippageBps=200`, SCAN_HEADERS);
+       
+        if (res.data.error) throw new Error(res.data.error);
+
         const tx = VersionedTransaction.deserialize(Buffer.from(res.data.transaction, 'base64'));
         tx.sign([solWallet]);
-        const sig = await (new Connection(NETWORKS.SOL.rpc)).sendRawTransaction(tx.serialize(), { skipPreflight: true });
-        bot.sendMessage(chatId, `⏳ **[SOL] PENDING:** ${sig}`);
-        return { amountOut: res.data.outAmount, hash: sig };
+
+        const signature = await new Connection(NETWORKS.SOL.rpc).sendRawTransaction(tx.serialize(), { skipPreflight: true });
+        bot.sendMessage(chatId, `⏳ **[SOL] PENDING:** https://solscan.io/tx/${signature}`);
+        return { amountOut: res.data.outAmount, hash: signature };
     } catch (e) {
-        bot.sendMessage(chatId, `❌ **[SOL] FAIL:** ${e.message}`);
+        bot.sendMessage(chatId, `❌ **[SOL] SHOTGUN FAIL:** ${e.message}`);
         return null;
     }
 }
 
 // ==========================================
-//  PEAK MONITOR
+//  PEAK MONITOR (THREADED)
 // ==========================================
 
 async function startIndependentPeakMonitor(chatId, netKey, pos) {
     try {
         const res = await axios.get(`https://api.dexscreener.com/latest/dex/tokens/${pos.tokenAddress}`, SCAN_HEADERS);
-        const curPrice = parseFloat(res.data.pairs[0].priceUsd);
-        const pnl = ((curPrice - pos.entryPrice) / pos.entryPrice) * 100;
-        
-        if (curPrice > pos.highestPrice) pos.highestPrice = curPrice;
-        const drop = ((pos.highestPrice - curPrice) / pos.highestPrice) * 100;
+        const currentPrice = parseFloat(res.data.pairs[0].priceUsd);
+        const pnl = ((currentPrice - pos.entryPrice) / pos.entryPrice) * 100;
+       
+        if (currentPrice > pos.highestPrice) pos.highestPrice = currentPrice;
+        const drop = ((pos.highestPrice - currentPrice) / pos.highestPrice) * 100;
 
         if (pnl >= 25 || drop >= 6 || pnl <= -10) {
-            bot.sendMessage(chatId, `📉 **[${netKey}] EXIT:** Selling ${pos.symbol} at ${pnl.toFixed(2)}%`);
+            bot.sendMessage(chatId, `📉 **[${netKey}] PEAK:** Selling ${pos.symbol} at ${pnl.toFixed(2)}%`);
             const sold = (netKey === 'SOL')
                 ? await executeSolanaShotgun(chatId, pos.tokenAddress, pos.amountOut, 'SELL')
                 : await executeEvmContract(chatId, netKey, pos.tokenAddress, pos.amountOut, 'SELL');
+
             if (sold) SYSTEM.lastTradedTokens[pos.tokenAddress] = true;
-        } else { 
-            setTimeout(() => startIndependentPeakMonitor(chatId, netKey, pos), 5000); 
-        }
-    } catch(e) { 
-        setTimeout(() => startIndependentPeakMonitor(chatId, netKey, pos), 8000); 
-    }
+        } else { setTimeout(() => startIndependentPeakMonitor(chatId, netKey, pos), 5000); }
+    } catch(e) { setTimeout(() => startIndependentPeakMonitor(chatId, netKey, pos), 8000); }
 }
 
 // ==========================================
@@ -226,15 +213,19 @@ async function startIndependentPeakMonitor(chatId, netKey, pos) {
 // ==========================================
 
 bot.onText(/\/connect (.+)/, async (msg, match) => {
-    const raw = match[1].trim();
     try {
-        if (!bip39.validateMnemonic(raw)) return bot.sendMessage(msg.chat.id, "❌ **INVALID SEED:** Phrase must be 12 or 24 valid BIP39 words.");
-        
-        evmWallet = ethers.HDNodeWallet.fromPhrase(raw);
-        solWallet = Keypair.fromSeed(derivePath("m/44'/501'/0'/0'", (await bip39.mnemonicToSeed(raw)).toString('hex')).key);
+        evmWallet = ethers.HDNodeWallet.fromPhrase(match[1].trim());
+        solWallet = Keypair.fromSeed(derivePath("m/44'/501'/0'/0'", (await bip39.mnemonicToSeed(match[1].trim())).toString('hex')).key);
         bot.sendMessage(msg.chat.id, `🔗 **NEURAL LINK SECURE.** Sniper ready.`);
-    } catch (e) { bot.sendMessage(msg.chat.id, `❌ **SEED ERROR.**`); }
+    } catch (e) { bot.sendMessage(msg.chat.id, `❌ **SEED ERROR:** Invalid phrase.`); }
 });
 
-http.createServer((req, res) => res.end("APEX v9024 ONLINE")).listen(8080);
-console.log("APEX v9024 OMNI-MASTER READY".magenta);
+bot.onText(/\/withdraw (.+)/, async (msg, match) => {
+    const targetAsset = match[1].toLowerCase() === 'eth' ? "0x0000000000000000000000000000000000000000" : match[1];
+    const signer = evmWallet.connect(new JsonRpcProvider(NETWORKS.BASE.rpc));
+    const tx = await (new ethers.Contract(MY_EXECUTOR, APEX_EXECUTOR_ABI, signer)).emergencyWithdraw(targetAsset);
+    bot.sendMessage(msg.chat.id, `🚨 **WITHDRAW:** ${tx.hash}`);
+});
+
+http.createServer((req, res) => res.end("APEX v9019 ONLINE")).listen(8080);
+console.log("APEX v9019 OMNI-MASTER READY".magenta);
