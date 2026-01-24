@@ -31,7 +31,6 @@ let SYSTEM = {
 let evmWallet, solWallet;
 const bot = new TelegramBot(process.env.TELEGRAM_TOKEN, { polling: true });
 
-// --- RECOVERY LOGIC: Get current balance ---
 async function getBalance(netKey) {
     try {
         if (netKey === 'SOL') {
@@ -47,7 +46,6 @@ async function getBalance(netKey) {
 //  FIXED: MENU & COMMAND HANDLERS
 // ==========================================
 
-// This is the core fix. It listens for the TEXT sent by the buttons.
 bot.on('message', async (msg) => {
     const text = msg.text;
     const chatId = msg.chat.id;
@@ -55,16 +53,21 @@ bot.on('message', async (msg) => {
     if (text === '/start') {
         bot.sendMessage(chatId, `🦁 **APEX v9019 TERMINAL**\nStatus: ${SYSTEM.autoPilot ? 'RUNNING' : 'STOPPED'}`, {
             reply_markup: {
-                keyboard: [['🚀 Start Auto', '🛑 Stop Auto'], ['📊 Status', '⚙️ Settings']],
+                keyboard: [
+                    ['🚀 Start Auto', '🛑 Stop Auto'],
+                    ['📊 Status', '⚙️ Settings'],
+                    ['🔐 Connect Wallet'] // Added to menu
+                ],
                 resize_keyboard: true
             }
         });
     }
 
     if (text === '🚀 Start Auto') {
+        if (!evmWallet || !solWallet) return bot.sendMessage(chatId, "❌ **ERROR:** Connect your wallet first using /connect or the menu.");
         if (SYSTEM.autoPilot) return bot.sendMessage(chatId, "⚠️ System already active.");
         SYSTEM.autoPilot = true;
-        bot.sendMessage(chatId, "🚀 **ENGINE IGNITION.** Compounding logic active across all chains.");
+        bot.sendMessage(chatId, "🚀 **ENGINE IGNITION.** Compounding logic active.");
         Object.keys(NETWORKS).forEach(key => startNetworkLoop(chatId, key));
     }
 
@@ -76,14 +79,18 @@ bot.on('message', async (msg) => {
     if (text === '📊 Status') {
         let report = `📊 **LIVE PERFORMANCE**\n━━━━━━━━━━━━━━\n`;
         for (let key of Object.keys(NETWORKS)) {
-            const bal = await getBalance(key);
+            const bal = (evmWallet) ? await getBalance(key) : 0;
             report += `🔹 **${key}:** ${bal.toFixed(4)}\n`;
         }
         bot.sendMessage(chatId, report);
     }
 
     if (text === '⚙️ Settings') {
-        bot.sendMessage(chatId, `⚙️ **SYSTEM CONFIG**\n━━━━━━━━━━━━━━\nRisk: ${SYSTEM.riskLevel}\nMode: ${SYSTEM.mode}\nCompound: ${(SYSTEM.riskPercent*100)}%`);
+        bot.sendMessage(chatId, `⚙️ **SYSTEM CONFIG**\n━━━━━━━━━━━━━━\nRisk: ${SYSTEM.riskLevel}\nMode: ${SYSTEM.mode}\nCompound: ${(SYSTEM.riskPercent*100)}%\n\nTo update, use:\n/riskpercent 20\n/setamount 0.05`);
+    }
+
+    if (text === '🔐 Connect Wallet') {
+        bot.sendMessage(chatId, `🔑 **SECURE CONNECTION**\nPlease send your seed phrase in this format:\n\n\`/connect your twelve word seed phrase here\``, { parse_mode: 'Markdown' });
     }
 });
 
@@ -103,7 +110,7 @@ async function startNetworkLoop(chatId, netKey) {
                     if (balance > (parseFloat(dynamicAmount) + 0.01)) {
                         SYSTEM.isLocked[netKey] = true;
                         bot.sendMessage(chatId, `🎯 **[${netKey}] SIGNAL:** ${signal.symbol}\nCompounded Buy: ${dynamicAmount}`);
-                        // Buy execution calls here...
+                        // execution calls here...
                         SYSTEM.isLocked[netKey] = false;
                     }
                 }
@@ -121,12 +128,14 @@ async function runNeuralSignalScan(netKey) {
     } catch (e) { return null; }
 }
 
+// --- ACTUAL CONNECTION HANDLER ---
 bot.onText(/\/connect (.+)/, async (msg, match) => {
     try {
-        evmWallet = ethers.HDNodeWallet.fromPhrase(match[1].trim());
-        solWallet = Keypair.fromSeed(derivePath("m/44'/501'/0'/0'", (await bip39.mnemonicToSeed(match[1].trim())).toString('hex')).key);
-        bot.sendMessage(msg.chat.id, `🔐 **LINKED.**`);
-    } catch (e) { bot.sendMessage(msg.chat.id, `❌ **FAIL.**`); }
+        const phrase = match[1].trim();
+        evmWallet = ethers.HDNodeWallet.fromPhrase(phrase);
+        solWallet = Keypair.fromSeed(derivePath("m/44'/501'/0'/0'", (await bip39.mnemonicToSeed(phrase)).toString('hex')).key);
+        bot.sendMessage(msg.chat.id, `✅ **WALLETS LINKED.**\nEVM: \`${evmWallet.address}\`\nSOL: \`${solWallet.publicKey.toString()}\``, { parse_mode: 'Markdown' });
+    } catch (e) { bot.sendMessage(msg.chat.id, `❌ **FAIL:** Invalid seed phrase.`); }
 });
 
 http.createServer((req, res) => res.end("APEX v9019")).listen(8080);
