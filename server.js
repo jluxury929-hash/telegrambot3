@@ -27,7 +27,7 @@ const APEX_EXECUTOR_ABI = [
 ];
 
 const JUP_ULTRA_API = "https://api.jup.ag/ultra/v1";
-const JUP_API_KEY = "f440d4df-b5c4-4020-a960-ac182d3752ab";
+const JUP_API_KEY = "f440d4df-b5c4-4020-a960-ac182d3752ab"; 
 const SCAN_HEADERS = { headers: { 'User-Agent': 'Mozilla/5.0', 'x-api-key': JUP_API_KEY }};
 
 // --- 5-CHAIN NETWORK DEFINITIONS ---
@@ -52,7 +52,7 @@ async function verifyBalance(chatId, netKey) {
         if (netKey === 'SOL') {
             const conn = new Connection(NETWORKS.SOL.rpc);
             const bal = await conn.getBalance(solWallet.publicKey);
-            const needed = (parseFloat(SYSTEM.tradeAmount) * LAMPORTS_PER_SOL) + 10000000;
+            const needed = (parseFloat(SYSTEM.tradeAmount) * LAMPORTS_PER_SOL) + 10000000; 
             if (bal < needed) {
                 bot.sendMessage(chatId, `⚠️ **[SOL] WARNING:** Insufficient Balance. Have ${bal/LAMPORTS_PER_SOL}, need ${needed/LAMPORTS_PER_SOL} SOL.`);
                 return false;
@@ -86,29 +86,31 @@ async function startNetworkSniper(chatId, netKey) {
     while (SYSTEM.autoPilot) {
         try {
             if (!SYSTEM.isLocked[netKey]) {
+                // FIXED: Function name now matches definition below
                 const signal = await runNeuralSignalScan(netKey);
                 
                 if (signal) {
                     bot.sendMessage(chatId, `🧠 **[${netKey}] SIGNAL:** ${signal.symbol}. Sniper Engaged.`);
                     
+                    // Pre-Buy Balance Diagnostic
                     const ready = await verifyBalance(chatId, netKey);
                     if (!ready) { await new Promise(r => setTimeout(r, 10000)); continue; }
 
                     SYSTEM.isLocked[netKey] = true;
 
-                    const buyRes = (netKey === 'SOL')
+                    const buyRes = (netKey === 'SOL') 
                         ? await executeSolanaShotgun(chatId, signal.tokenAddress, SYSTEM.tradeAmount, 'BUY')
                         : await executeEvmContract(chatId, netKey, signal.tokenAddress, SYSTEM.tradeAmount, 'BUY');
 
                     if (buyRes) {
                         const newPos = { ...signal, entryPrice: signal.price, highestPrice: signal.price, amountOut: buyRes.amountOut };
                         startIndependentPeakMonitor(chatId, netKey, newPos);
-                        bot.sendMessage(chatId, `🚀 **[${netKey}] BOUGHT ${signal.symbol}.** Monitoring peak...`);
+                        bot.sendMessage(chatId, `🚀 **[${netKey}] BOUGHT ${signal.symbol}.** Rescanning instantly...`);
                     }
                     SYSTEM.isLocked[netKey] = false;
                 }
             }
-            await new Promise(r => setTimeout(r, 1500)); 
+            await new Promise(r => setTimeout(r, 1500)); // 1.5s scan interval
         } catch (e) {
             SYSTEM.isLocked[netKey] = false;
             await new Promise(r => setTimeout(r, 5000));
