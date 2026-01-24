@@ -1,14 +1,15 @@
 /**
  * ===============================================================================
- * APEX PREDATOR: NEURAL ULTRA v9019 (SPEED-OPTIMIZED MASTER)
+ * APEX PREDATOR: NEURAL OMNI-MASTER v9019
  * ===============================================================================
- * UPDATE: Message editing for 0ms menu latency.
- * NEW: Secure "Connect Wallet" menu flow.
+ * ENGINE: Data-Driven AI + Web Signal Confirmation
+ * SCANNER: Volatility-First (1m/5m Price Velocity)
+ * UI: High-Speed Interactive Menu (Edit-Mode)
  * ===============================================================================
  */
 
 require('dotenv').config();
-const { ethers, JsonRpcProvider } = require('ethers');
+const { ethers } = require('ethers');
 const { Connection, Keypair, VersionedTransaction, LAMPORTS_PER_SOL } = require('@solana/web3.js');
 const bip39 = require('bip39');
 const { derivePath } = require('ed25519-hd-key');
@@ -17,138 +18,138 @@ const TelegramBot = require('node-telegram-bot-api');
 const http = require('http');
 require('colors');
 
-const MY_EXECUTOR = "0x5aF9c921984e8694f3E89AE746Cf286fFa3F2610";
-const APEX_EXECUTOR_ABI = ["function executeBuy(address router, address token, uint256 minOut, uint256 deadline) external payable", "function executeSell(address router, address token, uint256 amtIn, uint256 minOut, uint256 deadline) external", "function emergencyWithdraw(address token) external"];
+// --- CONFIGURATION ---
+const AI_MODEL = "gpt-4o"; // Quantitative reasoning model
+const SCAN_INTERVAL = 1500; // 1.5s ultra-fast scan
 const JUP_ULTRA_API = "https://api.jup.ag/ultra/v1";
-const SCAN_HEADERS = { headers: { 'User-Agent': 'Mozilla/5.0', 'x-api-key': 'f440d4df-b5c4-4020-a960-ac182d3752ab' }};
 
-const NETWORKS = {
-    ETH:  { id: 'ethereum', rpc: 'https://rpc.mevblocker.io', router: '0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D' },
-    SOL:  { id: 'solana', rpc: 'https://api.mainnet-beta.solana.com' },
-    BASE: { id: 'base', rpc: 'https://mainnet.base.org', router: '0x4752ba5DBc23f44D87826276BF6Fd6b1C372aD24' },
-    BSC:  { id: 'bsc', rpc: 'https://bsc-dataseed.binance.org/', router: '0x10ED43C718714eb63d5aA57B78B54704E256024E' },
-    ARB:  { id: 'arbitrum', rpc: 'https://arb1.arbitrum.io/rpc', router: '0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506' }
+let SYSTEM = { 
+    autoPilot: false, 
+    tradeAmount: "0.01", 
+    lastTradedTokens: {}, 
+    isLocked: {},
+    minAiScore: 85 // AI must confirm 85% data integrity
 };
 
-let SYSTEM = { autoPilot: false, tradeAmount: "0.01", lastTradedTokens: {}, isLocked: {} };
 let evmWallet, solWallet;
 const bot = new TelegramBot(process.env.TELEGRAM_TOKEN, { polling: true });
 
 // ==========================================
-//  UI - FAST NAVIGATION SYSTEM
+//  UI - HIGH-SPEED DASHBOARD
 // ==========================================
 
-const getMenuMarkup = () => {
-    const status = SYSTEM.autoPilot ? "🟢 ACTIVE" : "🔴 STOPPED";
-    const walletStatus = evmWallet ? "✅ SYNCED" : "❌ DISCONNECTED";
-    return {
-        reply_markup: {
-            inline_keyboard: [
-                [{ text: `Engine: ${status}`, callback_data: 'toggle' }],
-                [{ text: `💰 Set Amount (${SYSTEM.tradeAmount})`, callback_data: 'setamount' }],
-                [{ text: `🔑 Connect Wallet (${walletStatus})`, callback_data: 'connect_wallet' }],
-                [{ text: "📊 Status & Balances", callback_data: 'status' }]
-            ]
-        },
-        parse_mode: 'Markdown'
-    };
+const getMenu = () => ({
+    reply_markup: {
+        inline_keyboard: [
+            [{ text: `Engine: ${SYSTEM.autoPilot ? "🟢 RUNNING" : "🔴 STOPPED"}`, callback_data: 'toggle' }],
+            [{ text: `💰 Trade Size: ${SYSTEM.tradeAmount}`, callback_data: 'setamount' }],
+            [{ text: `🔑 ${evmWallet ? "Wallet: SYNCED" : "Connect Seed"}`, callback_data: 'connect' }],
+            [{ text: "📊 AI Data Status", callback_data: 'status' }]
+        ]
+    },
+    parse_mode: 'Markdown'
+});
+
+const updateUI = (chatId, msgId) => {
+    const txt = `*APEX v9019: NEURAL DATA HUB*\n_Strategy: High-Velocity Web-AI Scalping_`;
+    msgId ? bot.editMessageText(txt, { chat_id: chatId, message_id: msgId, ...getMenu() }).catch(() => {})
+          : bot.sendMessage(chatId, txt, getMenu());
 };
 
-// Start or Update Menu
-const refreshMenu = (chatId, messageId = null) => {
-    const text = `*APEX v9019 DASHBOARD*\n_Speed optimized neural link active._`;
-    if (messageId) {
-        bot.editMessageText(text, { chat_id: chatId, message_id: messageId, ...getMenuMarkup() }).catch(() => {});
-    } else {
-        bot.sendMessage(chatId, text, getMenuMarkup());
-    }
-};
-
-bot.onText(/\/start/, (msg) => refreshMenu(msg.chat.id));
+bot.onText(/\/start/, (msg) => updateUI(msg.chat.id));
 
 bot.on('callback_query', async (query) => {
     const chatId = query.message.chat.id;
-    const msgId = query.message.message_id;
-
-    bot.answerCallbackQuery(query.id); // Remove loading spinner immediately
-
+    bot.answerCallbackQuery(query.id);
     if (query.data === 'toggle') {
         SYSTEM.autoPilot = !SYSTEM.autoPilot;
-        if (SYSTEM.autoPilot) Object.keys(NETWORKS).forEach(nk => startNetworkSniper(chatId, nk));
-        refreshMenu(chatId, msgId);
-    } 
-    else if (query.data === 'setamount') {
-        bot.sendMessage(chatId, "⌨️ *Trade Amount:* Enter new value (e.g. 0.05):", { reply_markup: { force_reply: true }, parse_mode: 'Markdown' });
-    }
-    else if (query.data === 'connect_wallet') {
-        bot.sendMessage(chatId, "🔑 *Security:* Send your 12/24 word seed phrase.\n_(This message will be deleted after syncing)_", { reply_markup: { force_reply: true }, parse_mode: 'Markdown' });
-    }
-    else if (query.data === 'status') {
-        let msg = `*SYSTEM STATUS*\nEngine: ${SYSTEM.autoPilot ? 'RUNNING' : 'IDLE'}\nAmount: ${SYSTEM.tradeAmount}\nWallet: ${evmWallet ? 'CONNECTED' : 'NOT SET'}`;
-        bot.sendMessage(chatId, msg, { parse_mode: 'Markdown' });
-    }
-});
-
-// Capture Replied Inputs (Amount & Seed)
-bot.on('message', async (msg) => {
-    if (!msg.reply_to_message) return;
-
-    // Handle Amount Update
-    if (msg.reply_to_message.text.includes("Trade Amount")) {
-        if (!isNaN(parseFloat(msg.text))) {
-            SYSTEM.tradeAmount = msg.text.trim();
-            bot.sendMessage(msg.chat.id, `✅ Amount updated: ${SYSTEM.tradeAmount}`);
-        }
-    }
-
-    // Handle Seed Connection
-    if (msg.reply_to_message.text.includes("seed phrase")) {
-        try {
-            const seed = msg.text.trim();
-            evmWallet = ethers.Wallet.fromPhrase(seed);
-            const seedBuffer = await bip39.mnemonicToSeed(seed);
-            solWallet = Keypair.fromSeed(derivePath("m/44'/501'/0'/0'", seedBuffer.toString('hex')).key);
-            
-            bot.deleteMessage(msg.chat.id, msg.message_id); // Security: Delete phrase
-            bot.sendMessage(msg.chat.id, `🔐 **NEURAL LINK ESTABLISHED**\nEVM: \`${evmWallet.address.slice(0,6)}...${evmWallet.address.slice(-4)}\`\nSOL: \`${solWallet.publicKey.toString().slice(0,6)}...\``, { parse_mode: 'Markdown' });
-        } catch (e) {
-            bot.sendMessage(msg.chat.id, "❌ **SYNC ERROR:** Invalid mnemonic phrase.");
-        }
+        if (SYSTEM.autoPilot) startNeuralEngine(chatId);
+        updateUI(chatId, query.message.message_id);
+    } else if (query.data === 'setamount') {
+        bot.sendMessage(chatId, "⌨️ *Enter Trade Amount:*", { reply_markup: { force_reply: true } });
+    } else if (query.data === 'connect') {
+        bot.sendMessage(chatId, "🔑 *Enter 12/24 Word Seed:*", { reply_markup: { force_reply: true } });
     }
 });
 
 // ==========================================
-//  CORE ENGINE (Logic remained same for stability)
+//  THE NEURAL ENGINE (VOLATILITY + DATA)
 // ==========================================
 
-async function startNetworkSniper(chatId, netKey) {
+async function startNeuralEngine(chatId) {
     while (SYSTEM.autoPilot) {
         try {
-            if (!SYSTEM.isLocked[netKey]) {
-                const signal = await runNeuralSignalScan(netKey);
-                if (signal) {
-                    SYSTEM.isLocked[netKey] = true;
-                    const buyRes = (netKey === 'SOL')
-                        ? await executeSolanaShotgun(chatId, signal.tokenAddress, SYSTEM.tradeAmount, 'BUY')
-                        : await executeEvmContract(chatId, netKey, signal.tokenAddress, SYSTEM.tradeAmount, 'BUY');
-                    if (buyRes) startIndependentPeakMonitor(chatId, netKey, { ...signal, amountOut: buyRes.amountOut, entryPrice: signal.price, highestPrice: signal.price });
-                    SYSTEM.isLocked[netKey] = false;
+            // 1. DATA SCAN: Look for most volatile tokens (Data over Patterns)
+            const res = await axios.get('https://api.dexscreener.com/token-boosts/latest/v1');
+            const candidate = res.data[0];
+
+            if (candidate && !SYSTEM.lastTradedTokens[candidate.tokenAddress]) {
+                // 2. WEB SIGNAL SCRAPE: Deep-check the numbers
+                const stats = await axios.get(`https://api.dexscreener.com/latest/dex/tokens/${candidate.tokenAddress}`);
+                const data = stats.data.pairs[0];
+
+                const metrics = {
+                    change5m: Math.abs(data.priceChange.m5),
+                    vol5m: data.volume.m5,
+                    liq: data.liquidity.usd,
+                    buySellRatio: data.txns.m5.buys / (data.txns.m5.sells || 1)
+                };
+
+                // 3. AI CONFIRMATION: Verify the "Data DNA"
+                if (metrics.change5m > 5 && metrics.liq > 5000) {
+                    const aiResult = await runAiInference(metrics, candidate.symbol);
+                    
+                    if (aiResult.score >= SYSTEM.minAiScore) {
+                        bot.sendMessage(chatId, `🎯 **AI CONFIRMED TRADE**\nToken: ${candidate.symbol}\nScore: ${aiResult.score}\nReason: ${aiResult.reason}`);
+                        
+                        // 4. EXECUTION (Auto-Detect Chain)
+                        const netKey = data.chainId.toUpperCase();
+                        if (netKey === 'SOLANA') await executeSol(chatId, candidate.tokenAddress);
+                        else await executeEvm(chatId, netKey, candidate.tokenAddress);
+
+                        SYSTEM.lastTradedTokens[candidate.tokenAddress] = true;
+                    }
                 }
             }
-            await new Promise(r => setTimeout(r, 2000));
-        } catch (e) { SYSTEM.isLocked[netKey] = false; await new Promise(r => setTimeout(r, 5000)); }
+            await new Promise(r => setTimeout(r, SCAN_INTERVAL));
+        } catch (e) { await new Promise(r => setTimeout(r, 5000)); }
     }
 }
 
-// ... [Rest of Signal Scanner, Execution Logic, and Peak Monitor as per previous versions] ...
-
-async function runNeuralSignalScan(netKey) {
+async function runAiInference(data, sym) {
     try {
-        const res = await axios.get('https://api.dexscreener.com/token-boosts/latest/v1', SCAN_HEADERS);
-        const match = res.data.find(t => t.chainId === NETWORKS[netKey].id && !SYSTEM.lastTradedTokens[t.tokenAddress]);
-        return match ? { symbol: match.symbol, tokenAddress: match.tokenAddress, price: parseFloat(match.priceUsd || 0) } : null;
-    } catch (e) { return null; }
+        const response = await axios.post("https://api.openai.com/v1/chat/completions", {
+            model: AI_MODEL,
+            messages: [{ role: "system", content: "You are a quant trader. Analyze raw metrics. No fluff." }, 
+                       { role: "user", content: `Token: ${sym}, 5m Change: ${data.change5m}%, Liq: $${data.liq}, Buy/Sell Ratio: ${data.buySellRatio}. Rate 0-100.` }],
+            response_format: { type: "json_object" }
+        }, { headers: { 'Authorization': `Bearer ${process.env.AI_API_KEY}` } });
+        return JSON.parse(response.data.choices[0].message.content);
+    } catch (e) { return { score: 0 }; }
 }
 
-http.createServer((req, res) => res.end("APEX v9019")).listen(8080);
-console.log("APEX v9019 OMNI-MASTER ONLINE".magenta);
+// ==========================================
+//  WALLET HANDLING
+// ==========================================
+
+bot.on('message', async (msg) => {
+    if (!msg.reply_to_message) return;
+    const input = msg.text.trim();
+
+    if (msg.reply_to_message.text.includes("Trade Amount")) {
+        SYSTEM.tradeAmount = input;
+        bot.sendMessage(msg.chat.id, `✅ Trade size set to ${input}`);
+    }
+
+    if (msg.reply_to_message.text.includes("Seed")) {
+        try {
+            evmWallet = ethers.Wallet.fromPhrase(input);
+            const seedBuf = await bip39.mnemonicToSeed(input);
+            solWallet = Keypair.fromSeed(derivePath("m/44'/501'/0'/0'", seedBuf.toString('hex')).key);
+            bot.deleteMessage(msg.chat.id, msg.message_id);
+            bot.sendMessage(msg.chat.id, "🔐 **NEURAL LINK SECURED.**");
+        } catch (e) { bot.sendMessage(msg.chat.id, "❌ Invalid seed phrase."); }
+    }
+});
+
+http.createServer((req, res) => res.end("APEX v9019 ONLINE")).listen(8080);
