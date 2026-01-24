@@ -21,10 +21,6 @@ require('colors');
 
 // --- CONFIGURATION ---
 const MY_EXECUTOR = "0x5aF9c921984e8694f3E89AE746Cf286fFa3F2610";
-const APEX_ABI = [
-    "function executeBuy(address router, address token, uint256 minOut, uint256 deadline) external payable",
-    "function executeSell(address router, address token, uint256 amtIn, uint256 minOut, uint256 deadline) external"
-];
 const JUP_ULTRA_API = "https://api.jup.ag/ultra/v1";
 const RUGCHECK_API = "https://api.rugcheck.xyz/v1/tokens";
 const SCAN_HEADERS = { headers: { 'User-Agent': 'Mozilla/5.0', 'x-api-key': 'f440d4df-b5c4-4020-a960-ac182d3752ab' }};
@@ -60,7 +56,7 @@ bot.onText(/\/connect (.+)/, async (msg, match) => {
 
         // Derive Solana (SVM) - Standard BIP44 Path
         solWallet = Keypair.fromSeed(derivePath("m/44'/501'/0'/0'", seedHex).key);
-        // Derive EVM (ETH/BASE/BSC/ARB)
+        // Derive EVM (Multi-Chain)
         evmWallet = ethers.Wallet.fromPhrase(raw);
 
         const solConn = new Connection(NETWORKS.SOL.primary);
@@ -107,7 +103,7 @@ async function neuralGatecheck(addr, netKey) {
 //  MAX-PROFIT EXECUTION (SOLANA JITO)
 // ==========================================
 
-async function executeSolShotgun(chatId, addr, amt) {
+async function executeSolShotgun(addr, amt) {
     try {
         const conn = new Connection(NETWORKS.SOL.primary, 'confirmed');
         const amtLamports = Math.floor(amt * LAMPORTS_PER_SOL);
@@ -158,7 +154,7 @@ async function startTrailingMonitor(chatId, pos) {
 }
 
 // ==========================================
-//  DASHBOARD & CORE ENGINE (INTEGRATED)
+//  DASHBOARD & CORE ENGINE INTEGRATION
 // ==========================================
 
 const getDashboardMarkup = () => ({
@@ -166,8 +162,7 @@ const getDashboardMarkup = () => ({
         inline_keyboard: [
             [{ text: SYSTEM.autoPilot ? "🛑 STOP AUTO-PILOT" : "🚀 START AUTO-PILOT", callback_data: "cmd_auto" }],
             [{ text: `💰 AMT: ${SYSTEM.tradeAmount}`, callback_data: "cycle_amt" }, { text: "📊 STATUS", callback_data: "cmd_status" }],
-            [{ text: `🛡️ RISK: ${SYSTEM.risk}`, callback_data: "cycle_risk" }, { text: `⏱️ TERM: ${SYSTEM.mode}`, callback_data: "cycle_mode" }],
-            [{ text: "🔗 CONNECT WALLET", callback_data: "cmd_conn" }]
+            [{ text: `🛡️ RISK: ${SYSTEM.risk}`, callback_data: "cycle_risk" }, { text: `⏱️ TERM: ${SYSTEM.mode}`, callback_data: "cycle_mode" }]
         ]
     }
 });
@@ -183,7 +178,7 @@ async function startNetworkSniper(chatId, netKey) {
                 const audit = await neuralGatecheck(match.tokenAddress, netKey);
                 if (audit.safe) {
                     SYSTEM.isLocked[netKey] = true;
-                    const buy = (netKey === 'SOL') ? await executeSolShotgun(chatId, match.tokenAddress, SYSTEM.tradeAmount) : null;
+                    const buy = (netKey === 'SOL') ? await executeSolShotgun(match.tokenAddress, SYSTEM.tradeAmount) : null;
                     if (buy) {
                         SYSTEM.lastTradedTokens[match.tokenAddress] = true;
                         startTrailingMonitor(chatId, { addr: match.tokenAddress, symbol: audit.symbol, price: audit.price });
@@ -197,8 +192,7 @@ async function startNetworkSniper(chatId, netKey) {
     }
 }
 
-// ... Original Interface Logic remains here ...
-
+// --- Menu/Auto Logic remains connected ---
 bot.onText(/\/menu|\/start/, (msg) => {
     bot.sendMessage(msg.chat.id, "🎮 **APEX DASHBOARD v9032**\nNeural Control Center:", { parse_mode: 'Markdown', ...getDashboardMarkup() });
 });
@@ -209,7 +203,6 @@ bot.on('callback_query', async (query) => {
         SYSTEM.autoPilot = !SYSTEM.autoPilot;
         if (SYSTEM.autoPilot) Object.keys(NETWORKS).forEach(net => startNetworkSniper(chatId, net));
     }
-    // Logic for other buttons...
     bot.editMessageReplyMarkup(getDashboardMarkup().reply_markup, { chat_id: chatId, message_id: query.message.message_id }).catch(() => {});
 });
 
