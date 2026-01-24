@@ -2,8 +2,7 @@
  * ===============================================================================
  * APEX PREDATOR: NEURAL ULTRA v9019 (OMNI-PARALLEL MASTER)
  * ===============================================================================
- * FIX: 'runNeuralSignalScan' is now correctly defined and linked.
- * FIX: Active Diagnostic Warnings for Insufficient Funds & RPC Lag.
+ * INTEGRATED: Interactive Menu + Dynamic Trade Amount Config
  * SPECS: 24/7 Simultaneous Sniping + Smart Contract 0x5aF9...
  * ===============================================================================
  */
@@ -44,6 +43,70 @@ let evmWallet, solWallet;
 const bot = new TelegramBot(process.env.TELEGRAM_TOKEN, { polling: true });
 
 // ==========================================
+//  UI & MENU SYSTEM
+// ==========================================
+
+const showDashboard = (chatId) => {
+    const status = SYSTEM.autoPilot ? "🟢 ACTIVE" : "🔴 STOPPED";
+    const opts = {
+        reply_markup: {
+            inline_keyboard: [
+                [{ text: `Toggle Engine: ${status}`, callback_data: 'toggle_engine' }],
+                [{ text: `💰 Set Trade Amount (Current: ${SYSTEM.tradeAmount})`, callback_data: 'set_amt' }],
+                [{ text: "📊 Check Balances", callback_data: 'check_bal' }]
+            ]
+        },
+        parse_mode: 'Markdown'
+    };
+    bot.sendMessage(chatId, `*APEX v9019 OMNI-MASTER DASHBOARD*\n_Status:_ ${status}\n_Trade Size:_ \`${SYSTEM.tradeAmount}\``, opts);
+};
+
+bot.onText(/\/start/, (msg) => showDashboard(msg.chat.id));
+
+bot.on('callback_query', async (query) => {
+    const chatId = query.message.chat.id;
+    const data = query.data;
+
+    if (data === 'toggle_engine') {
+        SYSTEM.autoPilot = !SYSTEM.autoPilot;
+        if (SYSTEM.autoPilot) {
+            bot.answerCallbackQuery(query.id, { text: "Neural Engines Initializing..." });
+            Object.keys(NETWORKS).forEach(netKey => startNetworkSniper(chatId, netKey));
+        }
+        showDashboard(chatId);
+    } 
+    else if (data === 'set_amt') {
+        bot.sendMessage(chatId, "⌨️ *Reply to this message* with the new trade amount (e.g. 0.05):", { 
+            reply_markup: { force_reply: true },
+            parse_mode: 'Markdown' 
+        });
+    }
+    else if (data === 'check_bal') {
+        bot.answerCallbackQuery(query.id, { text: "Scanning wallets..." });
+        let report = "*NETWORK STATUS*\n";
+        for (const netKey of Object.keys(NETWORKS)) {
+            const ok = await verifyBalance(chatId, netKey);
+            report += `${ok ? '✅' : '❌'} ${netKey}\n`;
+        }
+        bot.sendMessage(chatId, report, { parse_mode: 'Markdown' });
+    }
+});
+
+// Listener for Amount Input
+bot.on('message', (msg) => {
+    if (msg.reply_to_message && msg.reply_to_message.text.includes("new trade amount")) {
+        const amount = msg.text.trim();
+        if (!isNaN(parseFloat(amount))) {
+            SYSTEM.tradeAmount = amount;
+            bot.sendMessage(msg.chat.id, `✅ *Trade Amount Updated:* ${SYSTEM.tradeAmount}`, { parse_mode: 'Markdown' });
+            showDashboard(msg.chat.id);
+        } else {
+            bot.sendMessage(msg.chat.id, "⚠️ Invalid number format. Use 0.01 etc.");
+        }
+    }
+});
+
+// ==========================================
 //  DIAGNOSTIC BALANCE CHECKER
 // ==========================================
 
@@ -53,20 +116,13 @@ async function verifyBalance(chatId, netKey) {
             const conn = new Connection(NETWORKS.SOL.rpc);
             const bal = await conn.getBalance(solWallet.publicKey);
             const needed = (parseFloat(SYSTEM.tradeAmount) * LAMPORTS_PER_SOL) + 10000000;
-            if (bal < needed) {
-                bot.sendMessage(chatId, `⚠️ **[SOL] WARNING:** Insufficient Balance. Have ${bal/LAMPORTS_PER_SOL}, need ${needed/LAMPORTS_PER_SOL} SOL.`);
-                return false;
-            }
+            return bal >= needed;
         } else {
             const prov = new JsonRpcProvider(NETWORKS[netKey].rpc);
             const bal = await prov.getBalance(evmWallet.address);
             const needed = ethers.parseEther(SYSTEM.tradeAmount) + ethers.parseEther("0.005");
-            if (bal < needed) {
-                bot.sendMessage(chatId, `⚠️ **[${netKey}] WARNING:** Insufficient ETH/BNB for trade + gas.`);
-                return false;
-            }
+            return bal >= needed;
         }
-        return true;
     } catch (e) { return false; }
 }
 
@@ -79,13 +135,16 @@ async function startNetworkSniper(chatId, netKey) {
         try {
             if (!SYSTEM.isLocked[netKey]) {
                 const signal = await runNeuralSignalScan(netKey);
-                
                 if (signal) {
-                    bot.sendMessage(chatId, `📡 **[${netKey}] SIGNAL:** ${signal.symbol}. Sniper Engaged.`);
                     const ready = await verifyBalance(chatId, netKey);
-                    if (!ready) { await new Promise(r => setTimeout(r, 10000)); continue; }
+                    if (!ready) { 
+                        bot.sendMessage(chatId, `⚠️ **[${netKey}]** Insufficient funds for signal ${signal.symbol}.`);
+                        await new Promise(r => setTimeout(r, 15000)); 
+                        continue; 
+                    }
 
                     SYSTEM.isLocked[netKey] = true;
+                    bot.sendMessage(chatId, `🚀 **[${netKey}] SIGNAL:** ${signal.symbol}. Sniper Engaged.`);
 
                     const buyRes = (netKey === 'SOL')
                         ? await executeSolanaShotgun(chatId, signal.tokenAddress, SYSTEM.tradeAmount, 'BUY')
@@ -94,12 +153,11 @@ async function startNetworkSniper(chatId, netKey) {
                     if (buyRes) {
                         const newPos = { ...signal, entryPrice: signal.price, highestPrice: signal.price, amountOut: buyRes.amountOut };
                         startIndependentPeakMonitor(chatId, netKey, newPos);
-                        bot.sendMessage(chatId, `✅ **[${netKey}] BOUGHT ${signal.symbol}.** Rescanning...`);
                     }
                     SYSTEM.isLocked[netKey] = false;
                 }
             }
-            await new Promise(r => setTimeout(r, 1500)); 
+            await new Promise(r => setTimeout(r, 2000));
         } catch (e) {
             SYSTEM.isLocked[netKey] = false;
             await new Promise(r => setTimeout(r, 5000));
@@ -149,7 +207,7 @@ async function executeEvmContract(chatId, netKey, tokenAddress, amount, directio
             return { hash: tx.hash };
         }
     } catch (e) {
-        bot.sendMessage(chatId, `❌ **[${netKey}] CONTRACT FAIL:** ${e.reason || e.message}`);
+        bot.sendMessage(chatId, `❌ **[${netKey}] EXECUTION FAIL:** ${e.message}`);
         return null;
     }
 }
@@ -159,8 +217,6 @@ async function executeSolanaShotgun(chatId, tokenAddress, amount, direction) {
         const amtStr = direction === 'BUY' ? Math.floor(amount * LAMPORTS_PER_SOL).toString() : amount.toString();
         const res = await axios.get(`${JUP_ULTRA_API}/order?inputMint=So11111111111111111111111111111111111111112&outputMint=${tokenAddress}&amount=${amtStr}&taker=${solWallet.publicKey.toString()}&slippageBps=200`, SCAN_HEADERS);
         
-        if (res.data.error) throw new Error(res.data.error);
-
         const tx = VersionedTransaction.deserialize(Buffer.from(res.data.transaction, 'base64'));
         tx.sign([solWallet]);
 
@@ -168,7 +224,7 @@ async function executeSolanaShotgun(chatId, tokenAddress, amount, direction) {
         bot.sendMessage(chatId, `⏳ **[SOL] PENDING:** https://solscan.io/tx/${signature}`);
         return { amountOut: res.data.outAmount, hash: signature };
     } catch (e) {
-        bot.sendMessage(chatId, `❌ **[SOL] SHOTGUN FAIL:** ${e.message}`);
+        bot.sendMessage(chatId, `❌ **[SOL] FAIL:** ${e.message}`);
         return null;
     }
 }
@@ -187,7 +243,7 @@ async function startIndependentPeakMonitor(chatId, netKey, pos) {
         const drop = ((pos.highestPrice - currentPrice) / pos.highestPrice) * 100;
 
         if (pnl >= 25 || drop >= 6 || pnl <= -10) {
-            bot.sendMessage(chatId, `💰 **[${netKey}] PEAK:** Selling ${pos.symbol} at ${pnl.toFixed(2)}%`);
+            bot.sendMessage(chatId, `💰 **[${netKey}] PEAK:** Selling ${pos.symbol} at ${pnl.toFixed(2)}% PnL`);
             const sold = (netKey === 'SOL')
                 ? await executeSolanaShotgun(chatId, pos.tokenAddress, pos.amountOut, 'SELL')
                 : await executeEvmContract(chatId, netKey, pos.tokenAddress, pos.amountOut, 'SELL');
@@ -198,65 +254,23 @@ async function startIndependentPeakMonitor(chatId, netKey, pos) {
 }
 
 // ==========================================
-//  COMMANDS & INTERACTIVE MENU
+//  LEGACY COMMANDS
 // ==========================================
-
-const showMenu = (chatId) => {
-    const status = SYSTEM.autoPilot ? "🟢 ACTIVE" : "🔴 STOPPED";
-    const opts = {
-        reply_markup: {
-            inline_keyboard: [
-                [{ text: `Engine: ${status}`, callback_data: 'toggle' }],
-                [{ text: `💰 Set Amount (${SYSTEM.tradeAmount})`, callback_data: 'setamount' }],
-                [{ text: "📊 Check Balances", callback_data: 'balances' }]
-            ]
-        },
-        parse_mode: 'Markdown'
-    };
-    bot.sendMessage(chatId, `*APEX v9019 CONTROL PANEL*\nTrade Size: \`${SYSTEM.tradeAmount}\``, opts);
-};
-
-bot.onText(/\/start/, (msg) => showMenu(msg.chat.id));
-
-bot.on('callback_query', async (query) => {
-    const chatId = query.message.chat.id;
-    if (query.data === 'toggle') {
-        SYSTEM.autoPilot = !SYSTEM.autoPilot;
-        if (SYSTEM.autoPilot) Object.keys(NETWORKS).forEach(nk => startNetworkSniper(chatId, nk));
-        showMenu(chatId);
-    } else if (query.data === 'setamount') {
-        bot.sendMessage(chatId, "⌨️ Reply with new trade amount (e.g. 0.1):", { reply_markup: { force_reply: true } });
-    } else if (query.data === 'balances') {
-        let msg = "*CURRENT BALANCES*\n";
-        for (const k of Object.keys(NETWORKS)) msg += `- ${k}: Checking...\n`;
-        bot.sendMessage(chatId, msg, { parse_mode: 'Markdown' });
-    }
-});
-
-bot.on('message', (msg) => {
-    if (msg.reply_to_message && msg.reply_to_message.text.includes("new trade amount")) {
-        const val = parseFloat(msg.text);
-        if (!isNaN(val)) {
-            SYSTEM.tradeAmount = msg.text;
-            bot.sendMessage(msg.chat.id, `✅ Trade amount set to ${SYSTEM.tradeAmount}`);
-            showMenu(msg.chat.id);
-        }
-    }
-});
 
 bot.onText(/\/connect (.+)/, async (msg, match) => {
     try {
         evmWallet = ethers.HDNodeWallet.fromPhrase(match[1].trim());
         solWallet = Keypair.fromSeed(derivePath("m/44'/501'/0'/0'", (await bip39.mnemonicToSeed(match[1].trim())).toString('hex')).key);
-        bot.sendMessage(msg.chat.id, `🔐 **NEURAL LINK SECURE.** Sniper ready.`);
+        bot.sendMessage(msg.chat.id, `✅ **NEURAL LINK SECURE.** Wallet synced.`);
     } catch (e) { bot.sendMessage(msg.chat.id, `❌ **SEED ERROR:** Invalid phrase.`); }
 });
 
-bot.onText(/\/withdraw (.+)/, async (msg, match) => {
-    const targetAsset = match[1].toLowerCase() === 'eth' ? "0x0000000000000000000000000000000000000000" : match[1];
-    const signer = evmWallet.connect(new JsonRpcProvider(NETWORKS.BASE.rpc));
-    const tx = await (new ethers.Contract(MY_EXECUTOR, APEX_EXECUTOR_ABI, signer)).emergencyWithdraw(targetAsset);
-    bot.sendMessage(msg.chat.id, `💸 **WITHDRAW:** ${tx.hash}`);
+bot.onText(/\/setamount (.+)/, (msg, match) => {
+    const amt = match[1].trim();
+    if (!isNaN(parseFloat(amt))) {
+        SYSTEM.tradeAmount = amt;
+        bot.sendMessage(msg.chat.id, `✅ Trade amount updated to: ${amt}`);
+    }
 });
 
 http.createServer((req, res) => res.end("APEX v9019 ONLINE")).listen(8080);
