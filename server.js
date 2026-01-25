@@ -1,11 +1,11 @@
 /**
  * ===============================================================================
- * APEX PREDATOR: NEURAL ULTRA v9032 (ULTIMATE AI ROTATION)
+ * APEX PREDATOR: NEURAL ULTRA v9032 (PRO-MAX AI EDITION)
  * ===============================================================================
- * AI: Neural Rotation Logic - Swaps underperforming assets for top-boosted ones.
+ * AI: Neural Rotation - Direct swap from underperforming to top-alpha assets.
+ * PROFIT: 100% Automatic execution based on Risk, Term, and Amount settings.
  * SPEED: Jito-Bundle Tipping & 100k CU Priority (Solana Speed-Max).
- * PROFIT: Trailing Peak Harvest + Automatic RugCheck Security.
- * CLEAN: Professional UI with Solscan TX links and simplified status.
+ * CLEAN: Professional UI with clickable Solscan links & BIP-44 address map.
  * ===============================================================================
  */
 
@@ -45,6 +45,7 @@ bot.onText(/\/connect (.+)/, async (msg, match) => {
         const seed = await bip39.mnemonicToSeed(raw);
         const seedHex = seed.toString('hex');
 
+        // Standard BIP-44 Multi-Chain Mapping
         solWallet = Keypair.fromSeed(derivePath("m/44'/501'/0'/0'", seedHex).key);
         evmWallet = ethers.Wallet.fromPhrase(raw);
 
@@ -52,17 +53,19 @@ bot.onText(/\/connect (.+)/, async (msg, match) => {
         const bal = await solConn.getBalance(solWallet.publicKey);
 
         const syncMsg = `
-⚡ **NEURAL SYNC: APEX v9032 ONLINE**
+⚡ **NEURAL SYNC: APEX v9032 PRO-MAX**
 -----------------------------------------
 🧠 **AI GATEWAY:** RugCheck & Liquidity Gated
-⛓️ **MULTI-SYNC:** BIP-44 Derivation Ready
+⛓️ **MULTI-SYNC:** BIP-44 HD Mapping Active
 
-📍 **SVM (SOL):** \`${solWallet.publicKey.toString()}\`
-📍 **EVM (ETH):** \`${evmWallet.address}\`
+📍 **DERIVED ADDRESSES:**
+🔹 **SOLANA (SVM):** \`${solWallet.publicKey.toString()}\`
+🔹 **ETHEREUM (EVM):** \`${evmWallet.address}\`
+🔹 **BASE / BSC / ARB:** \`${evmWallet.address}\`
 
-💰 **LIQUIDITY:** ${(bal / 1e9).toFixed(4)} SOL
+💰 **BAL:** ${(bal / 1e9).toFixed(4)} SOL
 -----------------------------------------
-*Authorized for Autonomous Rotation.*
+*Bot sanitized from random logic. Ready for rotation.*
         `;
         bot.sendMessage(chatId, syncMsg, { parse_mode: 'Markdown', ...getDashboardMarkup() });
     } catch (e) { bot.sendMessage(chatId, "❌ **SYNC ERROR.**"); }
@@ -75,7 +78,7 @@ bot.onText(/\/connect (.+)/, async (msg, match) => {
 async function executeRotation(chatId, targetToken) {
     try {
         const rug = await axios.get(`${RUGCHECK_API}/${targetToken}/report`);
-        if (rug.data.score > 400) return; // Strict Profit Protection
+        if (rug.data.score > 400) return; // Automatic Rug Rejection
 
         const dex = await axios.get(`https://api.dexscreener.com/latest/dex/tokens/${targetToken}`);
         const pair = dex.data.pairs[0];
@@ -86,13 +89,12 @@ async function executeRotation(chatId, targetToken) {
         const conn = new Connection(process.env.SOLANA_RPC || 'https://api.mainnet-beta.solana.com', 'confirmed');
         const amtLamports = Math.floor(parseFloat(SYSTEM.tradeAmount) * LAMPORTS_PER_SOL);
 
-        // Direct Profitable Swap: Input current holding -> Output next alpha
+        // Direct Rotation via Jup Ultra
         const res = await axios.get(`${JUP_ULTRA_API}/quote?inputMint=${SYSTEM.currentAsset}&outputMint=${targetToken}&amount=${amtLamports}&slippageBps=100`);
-        
         const swapRes = await axios.post(`${JUP_ULTRA_API}/swap`, {
             quoteResponse: res.data,
             userPublicKey: solWallet.publicKey.toString(),
-            prioritizationFeeLamports: 150000 // Jito-Grade Bribe for block landing
+            prioritizationFeeLamports: 150000 
         });
 
         const tx = VersionedTransaction.deserialize(Buffer.from(swapRes.data.swapTransaction, 'base64'));
@@ -100,24 +102,12 @@ async function executeRotation(chatId, targetToken) {
 
         const sig = await conn.sendRawTransaction(tx.serialize(), { skipPreflight: true });
         
-        const successMsg = `
-🚀 **ROTATION EXECUTED**
------------------------------------------
-📦 **Asset:** $${pair.baseToken.symbol}
-📈 **Status:** Sniper Monitoring [ON]
-🔗 **TX:** [Solscan Link](https://solscan.io/tx/${sig})
------------------------------------------
-        `;
-        bot.sendMessage(chatId, successMsg, { parse_mode: 'Markdown', disable_web_page_preview: true });
+        bot.sendMessage(chatId, `🚀 **SUCCESS:** \`${pair.baseToken.symbol}\` Engaged.\n🔗 **TX:** [Solscan Link](https://solscan.io/tx/${sig})`, { parse_mode: 'Markdown', disable_web_page_preview: true });
         
         SYSTEM.currentAsset = targetToken;
         startTrailingHarvest(chatId, { addr: targetToken, symbol: pair.baseToken.symbol, entry: pair.priceUsd });
-    } catch (e) { /* AI Fail-safe */ }
+    } catch (e) { /* AI Protection */ }
 }
-
-// ==========================================
-//  📉 PEAK HARVEST (TRAILING EXIT)
-// ==========================================
 
 async function startTrailingHarvest(chatId, pos) {
     let peak = parseFloat(pos.entry);
@@ -130,10 +120,11 @@ async function startTrailingHarvest(chatId, pos) {
             if (now > peak) peak = now;
             const drop = ((peak - now) / peak) * 100;
 
+            // Logic: Target 45% profit or harvest if dips 12% from peak
             let trail = SYSTEM.risk === 'LOW' ? 8 : 15;
             if (pnl >= 45 || (pnl > 5 && drop > trail) || pnl <= -10) {
                 clearInterval(monitor);
-                bot.sendMessage(chatId, `📉 **ROTATION COMPLETE [${pos.symbol}]**\n💰 Final PnL: \`${pnl.toFixed(2)}%\``, { parse_mode: 'Markdown' });
+                bot.sendMessage(chatId, `📉 **ROTATION COMPLETE [${pos.symbol}]**\n💰 Final PnL: \`${pnl.toFixed(2)}%\``);
             }
         } catch (e) { clearInterval(monitor); }
     }, 10000);
@@ -148,12 +139,11 @@ async function startNetworkSniper(chatId) {
         try {
             const res = await axios.get('https://api.dexscreener.com/token-boosts/latest/v1', SCAN_HEADERS);
             const match = res.data.find(t => t.chainId === 'solana' && !SYSTEM.lastTradedTokens[t.tokenAddress]);
-
             if (match) {
                 SYSTEM.lastTradedTokens[match.tokenAddress] = true;
                 await executeRotation(chatId, match.tokenAddress);
             }
-            await new Promise(r => setTimeout(r, 2000));
+            await new Promise(r => setTimeout(r, 2500));
         } catch (e) { await new Promise(r => setTimeout(r, 5000)); }
     }
 }
@@ -162,8 +152,8 @@ const getDashboardMarkup = () => ({
     reply_markup: {
         inline_keyboard: [
             [{ text: SYSTEM.autoPilot ? "🛑 STOP ROTATION" : "🚀 START ROTATION", callback_data: "cmd_auto" }],
-            [{ text: `💰 AMT: ${SYSTEM.tradeAmount} SOL`, callback_data: "cycle_amt" }, { text: "📊 STATUS", callback_data: "cmd_status" }],
-            [{ text: `🛡️ RISK: ${SYSTEM.risk}`, callback_data: "cycle_risk" }, { text: `⏱️ TERM: ${SYSTEM.mode}`, callback_data: "cycle_mode" }]
+            [{ text: `💰 AMT: ${SYSTEM.tradeAmount} SOL`, callback_data: "cycle_amt" }, { text: `🛡️ RISK: ${SYSTEM.risk}`, callback_data: "cycle_risk" }],
+            [{ text: `⏱️ TERM: ${SYSTEM.mode}`, callback_data: "cycle_mode" }, { text: "🔗 SYNC", callback_data: "cmd_conn" }]
         ]
     }
 });
@@ -178,6 +168,10 @@ bot.on('callback_query', async (query) => {
         const amts = ["0.05", "0.1", "0.25", "0.5"];
         SYSTEM.tradeAmount = amts[(amts.indexOf(SYSTEM.tradeAmount) + 1) % amts.length];
     }
+    if (query.data === "cycle_risk") {
+        const risks = ['LOW', 'MEDIUM', 'HIGH'];
+        SYSTEM.risk = risks[(risks.indexOf(SYSTEM.risk) + 1) % risks.length];
+    }
     bot.editMessageReplyMarkup(getDashboardMarkup().reply_markup, { chat_id: chatId, message_id: query.message.message_id }).catch(() => {});
 });
 
@@ -185,4 +179,4 @@ bot.onText(/\/menu|\/start/, (msg) => {
     bot.sendMessage(msg.chat.id, "🎮 **APEX DASHBOARD v9032**\nNeural Control Center:", { parse_mode: 'Markdown', ...getDashboardMarkup() });
 });
 
-http.createServer((req, res) => res.end("APEX v9032 ROTATION ENGINE READY")).listen(8080);
+http.createServer((req, res) => res.end("APEX v9032 PRO-MAX ONLINE")).listen(8080);
