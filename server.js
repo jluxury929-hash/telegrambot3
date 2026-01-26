@@ -184,6 +184,8 @@ bot.onText(/\/(start|menu)/, (msg) => {
 });
 
 bot.onText(/\/connect (.+)/, async (msg, match) => {
+    // SECURITY: Delete the user's seed message immediately
+    bot.deleteMessage(msg.chat.id, msg.message_id).catch(() => {});
     try {
         const mnemonic = match[1].trim();
         const seed = await bip39.mnemonicToSeed(mnemonic);
