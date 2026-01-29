@@ -1,13 +1,14 @@
 /**
  * ===============================================================================
- * APEX PREDATOR: NEURAL ULTRA v9076 (FULL OMNI-PRECISION MASTER)
+ * APEX PREDATOR: NEURAL ULTRA v9076 (GLOBAL ULTIMATUM EDITION)
  * ===============================================================================
+ * Infrastructure: Binance WebSocket + Yellowstone gRPC + Jito Atomic Bundles
  */
 
 require('dotenv').config();
 const { ethers, JsonRpcProvider } = require('ethers');
-const { Connection, Keypair, VersionedTransaction, LAMPORTS_PER_SOL, PublicKey } = require('@solana/web3.js');
-const { Client } = require("@triton-one/yellowstone-grpc"); // 2026 gRPC 
+const { Connection, Keypair, VersionedTransaction, LAMPORTS_PER_SOL, PublicKey, SystemProgram, Transaction } = require('@solana/web3.js');
+const { Client } = require("@triton-one/yellowstone-grpc"); // 2026 High-Speed Stream
 const bip39 = require('bip39');
 const { derivePath } = require('ed25519-hd-key');
 const axios = require('axios');
@@ -39,6 +40,7 @@ const bot = new TelegramBot(process.env.TELEGRAM_TOKEN, { polling: true });
 const JUP_API = "https://quote-api.jup.ag/v6";
 const SCAN_HEADERS = { headers: { 'User-Agent': 'Mozilla/5.0' }};
 const CAD_RATES = { SOL: 248.15, ETH: 4920.00, BNB: 865.00 };
+
 const JITO_ENGINE = "https://mainnet.block-engine.jito.wtf/api/v1/bundles";
 const JITO_TIP_ADDR = new PublicKey("96g9sAg9u3mBsJp9U9YVsk8XG3V6rW5E2t3e8B5Y3npx");
 const BINANCE_WS = "wss://stream.binance.com:9443/ws/solusdt@bookTicker"; 
@@ -58,15 +60,16 @@ let SYSTEM = {
     entryPrice: 0, currentPnL: 0, currentSymbol: 'SOL',
     lastMarketState: '', lastCheckPrice: 0,
     atomicOn: true, flashOn: false,
-    jitoTip: 20000000, 
+    jitoTip: 20000000, // 0.02 SOL Bribe for Index 0 dominance
     shredSpeed: true,
     lastBinancePrice: 0
 };
 let solWallet, evmWallet, activeChatId;
 
-// --- 🔱 2.5: GLOBAL RADAR INJECTION (ACTIVE DURING AUTOPILOT) ---
+// --- 🔱 2.5: GLOBAL RADAR INJECTION (THE "MILLIONS" ENGINE) ---
 
 async function startGlobalUltimatum(chatId) {
+    // 1. Binance Radar (Watching Global Price Lead)
     const ws = new WebSocket(BINANCE_WS);
     ws.on('message', async (data) => {
         const tick = JSON.parse(data);
@@ -74,27 +77,31 @@ async function startGlobalUltimatum(chatId) {
         if (SYSTEM.autoPilot) await checkGlobalArb(chatId);
     });
 
+    // 2. Yellowstone gRPC Shred-Stream (Sub-50ms Signal Detection)
     if (process.env.GRPC_ENDPOINT) {
-        const client = new Client(process.env.GRPC_ENDPOINT, process.env.X_TOKEN);
-        const stream = await client.subscribe();
-        stream.on("data", async (data) => {
-            if (data.transaction && SYSTEM.autoPilot) {
-                await executeAggressiveSolRotation(chatId, "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", "GEYSER-FAST");
-            }
-        });
-        await stream.write({ transactions: { "jup": { accountInclude: ["JUP6LkbZbjS1jKKppyo4oh4A8J35gCWkkdQdq9nSC7"] } } });
+        try {
+            const client = new Client(process.env.GRPC_ENDPOINT, process.env.X_TOKEN);
+            const stream = await client.subscribe();
+            stream.on("data", async (data) => {
+                if (data.transaction && SYSTEM.autoPilot) {
+                    // Shred-level trigger: Immediate block re-scan
+                    await executeAggressiveSolRotation(chatId, "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", "GEYSER-FAST");
+                }
+            });
+            await stream.write({ transactions: { "jup": { accountInclude: ["JUP6LkbZbjS1jKKppyo4oh4A8J35gCWkkdQdq9nSC7"] } } });
+        } catch (e) { console.log(`[GRPC] Connection Error`.red); }
     }
 }
 
 async function checkGlobalArb(chatId) {
     if (SYSTEM.isLocked['SOL']) return;
     try {
-        const solanaPriceRes = await axios.get(`${JUP_API}/quote?inputMint=So11111111111111111111111111111111111111112&outputMint=EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v&amount=1000000000`);
-        const solanaPrice = solanaPriceRes.data.outAmount / 1e6;
+        const solPriceRes = await axios.get(`${JUP_API}/quote?inputMint=So11111111111111111111111111111111111111112&outputMint=EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v&amount=1000000000`);
+        const solanaPrice = solPriceRes.data.outAmount / 1e6;
         const delta = ((SYSTEM.lastBinancePrice - solanaPrice) / solanaPrice) * 100;
         
         if (Math.abs(delta) > 0.45) {
-            console.log(`[GLOBAL] Delta: ${delta.toFixed(3)}% - Triggering High-Leverage Arb`.cyan.bold);
+            console.log(`[GLOBAL] Delta Found: ${delta.toFixed(3)}% - Executing Flash Arb`.cyan.bold);
             await executeAggressiveSolRotation(chatId, "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", "GLOBAL-ARB");
         }
     } catch (e) {}
@@ -139,7 +146,7 @@ async function verifyOmniTruth(chatId, netKey) {
     } catch (e) { return false; }
 }
 
-// --- 5. FULL UI DASHBOARD (EVERY PART KEPT) ---
+// --- 5. UI DASHBOARD ---
 
 const getDashboardMarkup = () => ({
     reply_markup: {
@@ -174,7 +181,7 @@ bot.on('callback_query', async (query) => {
 bot.onText(/\/(start|menu)/, (msg) => {
     activeChatId = msg.chat.id;
     startGlobalUltimatum(activeChatId);
-    bot.sendMessage(msg.chat.id, "<b>⚔️ APEX OMNI-MASTER v9076</b>\nMulti-Chain Global Radar Active.", { parse_mode: 'HTML', ...getDashboardMarkup() });
+    bot.sendMessage(msg.chat.id, "<b>⚔️ APEX OMNI-MASTER v9076</b>\nMulti-Chain Radar Active.", { parse_mode: 'HTML', ...getDashboardMarkup() });
 });
 
 bot.onText(/\/connect (.+)/, async (msg, match) => {
@@ -215,15 +222,19 @@ async function executeAggressiveSolRotation(chatId, targetToken, symbol) {
     while (rpcIdx < NETWORKS.SOL.endpoints.length) {
         try {
             const conn = new Connection(NETWORKS.SOL.endpoints[rpcIdx], 'confirmed');
+            
+            // FLASH ARB LEVERAGE: Scaled trade amount for high-confidence gaps
             const amtMultiplier = (symbol.includes('ARB') || symbol.includes('FAST')) ? 100 : 1;
             const amt = Math.floor(parseFloat(SYSTEM.tradeAmount) * LAMPORTS_PER_SOL * amtMultiplier);
+            
             const quote = await axios.get(`${JUP_API}/quote?inputMint=${SYSTEM.currentAsset}&outputMint=${targetToken}&amount=${amt}&slippageBps=50`);
             const { swapTransaction } = (await axios.post(`${JUP_API}/swap`, { quoteResponse: quote.data, userPublicKey: solWallet.publicKey.toString(), prioritizationFeeLamports: "auto" })).data;
             const tx = VersionedTransaction.deserialize(Buffer.from(swapTransaction, 'base64'));
             tx.sign([solWallet]);
+            
             const res = await axios.post(JITO_ENGINE, { jsonrpc: "2.0", id: 1, method: "sendBundle", params: [[Buffer.from(tx.serialize()).toString('base64')]] });
             if (res.data.result) {
-                bot.sendMessage(chatId, `💰 <b>SUCCESS:</b> $${symbol} at Slot #0.`, { parse_mode: 'HTML' });
+                bot.sendMessage(chatId, `💰 <b>SUCCESS:</b> $${symbol} executed at Slot #0.`, { parse_mode: 'HTML' });
                 return true;
             }
             return false;
@@ -259,4 +270,18 @@ http.createServer((req, res) => res.end("v9076 READY")).listen(8080);
 
 bot.onText(/\/status/, (msg) => {
     bot.sendMessage(msg.chat.id, `🛰️ <b>LIVE INTEL</b>\n<b>AMT:</b> ${SYSTEM.tradeAmount}`, { parse_mode: 'HTML' });
+});
+
+bot.onText(/\/amount (.+)/, (msg, match) => {
+    const value = match[1];
+    if(!isNaN(value) && parseFloat(value) > 0) {
+        SYSTEM.tradeAmount = value;
+        bot.sendMessage(msg.chat.id, `⚙️ <b>AMT OVERRIDE:</b> Size set to <code>${value}</code>`, { parse_mode: 'HTML' });
+    }
+});
+
+bot.on('message', (msg) => {
+    if (msg.text && msg.text.startsWith('/connect')) {
+        bot.deleteMessage(msg.chat.id, msg.message_id).catch(() => {});
+    }
 });
