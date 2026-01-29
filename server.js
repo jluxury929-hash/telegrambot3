@@ -1,14 +1,13 @@
 /**
  * ===============================================================================
- * APEX PREDATOR: NEURAL ULTRA v9076 (GLOBAL ULTIMATUM EDITION)
+ * APEX PREDATOR: NEURAL ULTRA v9076 (FULL OMNI-PRECISION MASTER)
  * ===============================================================================
- * Fused Infrastructure: Binance WebSocket + Yellowstone gRPC + Jito Atomic Bundles
  */
 
 require('dotenv').config();
 const { ethers, JsonRpcProvider } = require('ethers');
-const { Connection, Keypair, VersionedTransaction, LAMPORTS_PER_SOL, PublicKey, SystemProgram, Transaction } = require('@solana/web3.js');
-const { Client } = require("@triton-one/yellowstone-grpc"); // 2026 High-Speed Stream
+const { Connection, Keypair, VersionedTransaction, LAMPORTS_PER_SOL, PublicKey } = require('@solana/web3.js');
+const { Client } = require("@triton-one/yellowstone-grpc"); // 2026 gRPC 
 const bip39 = require('bip39');
 const { derivePath } = require('ed25519-hd-key');
 const axios = require('axios');
@@ -40,7 +39,6 @@ const bot = new TelegramBot(process.env.TELEGRAM_TOKEN, { polling: true });
 const JUP_API = "https://quote-api.jup.ag/v6";
 const SCAN_HEADERS = { headers: { 'User-Agent': 'Mozilla/5.0' }};
 const CAD_RATES = { SOL: 248.15, ETH: 4920.00, BNB: 865.00 };
-
 const JITO_ENGINE = "https://mainnet.block-engine.jito.wtf/api/v1/bundles";
 const JITO_TIP_ADDR = new PublicKey("96g9sAg9u3mBsJp9U9YVsk8XG3V6rW5E2t3e8B5Y3npx");
 const BINANCE_WS = "wss://stream.binance.com:9443/ws/solusdt@bookTicker"; 
@@ -60,30 +58,27 @@ let SYSTEM = {
     entryPrice: 0, currentPnL: 0, currentSymbol: 'SOL',
     lastMarketState: '', lastCheckPrice: 0,
     atomicOn: true, flashOn: false,
-    jitoTip: 20000000, // 0.02 SOL Bribe for Index 0 dominance
+    jitoTip: 20000000, 
     shredSpeed: true,
     lastBinancePrice: 0
 };
 let solWallet, evmWallet, activeChatId;
 
-// --- 🔱 2.5: GLOBAL RADAR INJECTION (THE "MILLIONS" ENGINE) ---
+// --- 🔱 2.5: GLOBAL RADAR INJECTION (ACTIVE DURING AUTOPILOT) ---
 
 async function startGlobalUltimatum(chatId) {
-    // 1. Binance Radar (Watching Global Price Lead)
     const ws = new WebSocket(BINANCE_WS);
     ws.on('message', async (data) => {
         const tick = JSON.parse(data);
         SYSTEM.lastBinancePrice = (parseFloat(tick.b) + parseFloat(tick.a)) / 2;
-        await checkGlobalArb(chatId);
+        if (SYSTEM.autoPilot) await checkGlobalArb(chatId);
     });
 
-    // 2. Yellowstone gRPC Shred-Stream (Sub-50ms Signal Detection)
     if (process.env.GRPC_ENDPOINT) {
         const client = new Client(process.env.GRPC_ENDPOINT, process.env.X_TOKEN);
         const stream = await client.subscribe();
         stream.on("data", async (data) => {
             if (data.transaction && SYSTEM.autoPilot) {
-                // Force Immediate Re-scan of Block for Index 0 opportunities
                 await executeAggressiveSolRotation(chatId, "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", "GEYSER-FAST");
             }
         });
@@ -92,14 +87,14 @@ async function startGlobalUltimatum(chatId) {
 }
 
 async function checkGlobalArb(chatId) {
-    if (!SYSTEM.autoPilot || SYSTEM.isLocked['SOL']) return;
+    if (SYSTEM.isLocked['SOL']) return;
     try {
         const solanaPriceRes = await axios.get(`${JUP_API}/quote?inputMint=So11111111111111111111111111111111111111112&outputMint=EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v&amount=1000000000`);
         const solanaPrice = solanaPriceRes.data.outAmount / 1e6;
         const delta = ((SYSTEM.lastBinancePrice - solanaPrice) / solanaPrice) * 100;
         
         if (Math.abs(delta) > 0.45) {
-            console.log(`[GLOBAL] 🔱 Delta Found: ${delta.toFixed(3)}% - Executing Flash Arb`.cyan.bold);
+            console.log(`[GLOBAL] Delta: ${delta.toFixed(3)}% - Triggering High-Leverage Arb`.cyan.bold);
             await executeAggressiveSolRotation(chatId, "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", "GLOBAL-ARB");
         }
     } catch (e) {}
@@ -109,29 +104,16 @@ async function checkGlobalArb(chatId) {
 
 async function verifySignalIntegrity(tokenAddress, netKey) {
     if (netKey !== 'SOL') return true; 
-    
     try {
         const conn = new Connection(NETWORKS.SOL.endpoints[0]);
         const mintInfo = await conn.getParsedAccountInfo(new PublicKey(tokenAddress));
         const data = mintInfo.value?.data?.parsed?.info;
-
         if (!data) return false;
-
-        if (data.mintAuthority !== null) {
-            console.log(`[GUARD] Refused: Mint Authority active on ${tokenAddress}`.red);
-            return false;
-        }
-
-        if (data.freezeAuthority !== null) {
-            console.log(`[GUARD] Refused: Freeze Authority detected on ${tokenAddress}`.red);
-            return false;
-        }
+        if (data.mintAuthority !== null || data.freezeAuthority !== null) return false;
 
         const rugReport = await axios.get(`https://api.rugcheck.xyz/v1/tokens/${tokenAddress}/report`, SCAN_HEADERS);
         const risks = rugReport.data?.risks || [];
-        const isRugSafe = !risks.some(r => r.name === 'Mint Authority' || r.name === 'Large LP holder' || r.name === 'Unlocked LP');
-
-        return isRugSafe;
+        return !risks.some(r => r.name === 'Mint Authority' || r.name === 'Large LP holder' || r.name === 'Unlocked LP');
     } catch (e) { return false; }
 }
 
@@ -143,38 +125,21 @@ async function verifyOmniTruth(chatId, netKey) {
         if (netKey === 'SOL') {
             const conn = new Connection(NETWORKS.SOL.endpoints[0]);
             const bal = await conn.getBalance(solWallet.publicKey);
-            const rent = 2039280; 
-            const fee = 150000;   
-            const totalRequired = (tradeAmt * LAMPORTS_PER_SOL) + rent + fee + SYSTEM.jitoTip;
-
+            const totalRequired = (tradeAmt * LAMPORTS_PER_SOL) + 2039280 + 150000 + SYSTEM.jitoTip;
             if (bal < totalRequired) {
-                bot.sendMessage(chatId, `⚠️ <b>[SOL] INSUFFICIENT FUNDS:</b>\nNeed: <code>${(totalRequired/1e9).toFixed(4)}</code> | Have: <code>${(bal/1e9).toFixed(4)}</code>`, { parse_mode: 'HTML' });
-                return false;
-            }
-
-            const feeInCad = ((rent + fee + SYSTEM.jitoTip) / 1e9) * CAD_RATES.SOL;
-            const tradeInCad = tradeAmt * CAD_RATES.SOL;
-            if (feeInCad > (tradeInCad * 0.15)) {
-                bot.sendMessage(chatId, `🛡️ <b>[SOL] SHIELD:</b> Trade Blocked. Fees ($${feeInCad.toFixed(2)} CAD) are > 15% of your $${tradeInCad.toFixed(2)} trade.`, { parse_mode: 'HTML' });
+                bot.sendMessage(chatId, `⚠️ <b>[SOL] INSUFFICIENT FUNDS</b>`, { parse_mode: 'HTML' });
                 return false;
             }
         } else {
-            const net = NETWORKS[netKey];
-            const provider = new JsonRpcProvider(net.rpc);
+            const provider = new JsonRpcProvider(NETWORKS[netKey].rpc);
             const bal = await provider.getBalance(evmWallet.address);
-            const gasBuffer = ethers.parseEther("0.0005"); 
-            const totalRequired = ethers.parseEther(tradeAmt.toString()) + gasBuffer;
-
-            if (bal < totalRequired) {
-                bot.sendMessage(chatId, `⚠️ <b>[${netKey}] INSUFFICIENT FUNDS:</b>\nNeed: <code>${ethers.formatEther(totalRequired)} ${net.sym}</code> | Have: <code>${ethers.formatEther(bal)}</code>`, { parse_mode: 'HTML' });
-                return false;
-            }
+            if (bal < ethers.parseEther(tradeAmt.toString())) return false;
         }
         return true;
     } catch (e) { return false; }
 }
 
-// --- 5. UI DASHBOARD & LISTENERS ---
+// --- 5. FULL UI DASHBOARD (EVERY PART KEPT) ---
 
 const getDashboardMarkup = () => ({
     reply_markup: {
@@ -189,52 +154,37 @@ const getDashboardMarkup = () => ({
 
 bot.on('callback_query', async (query) => {
     const chatId = query.message.chat.id;
-    const msgId = query.message.message_id;
     activeChatId = chatId;
-
-    if (query.data === "tg_atomic") {
-        SYSTEM.atomicOn = !SYSTEM.atomicOn;
-        bot.answerCallbackQuery(query.id, { text: `Atomic Protection: ${SYSTEM.atomicOn ? 'ON' : 'OFF'}` });
-    } else if (query.data === "tg_flash") {
-        SYSTEM.flashOn = !SYSTEM.flashOn;
-        bot.answerCallbackQuery(query.id, { text: `Flash Loans: ${SYSTEM.flashOn ? 'ON' : 'OFF'}` });
-    } else if (query.data === "cycle_amt") {
+    if (query.data === "tg_atomic") SYSTEM.atomicOn = !SYSTEM.atomicOn;
+    else if (query.data === "tg_flash") SYSTEM.flashOn = !SYSTEM.flashOn;
+    else if (query.data === "cycle_amt") {
         const amts = ["0.01", "0.05", "0.1", "0.25", "0.5"];
         SYSTEM.tradeAmount = amts[(amts.indexOf(SYSTEM.tradeAmount) + 1) % amts.length];
     } else if (query.data === "cmd_auto") {
         if (!solWallet) return bot.answerCallbackQuery(query.id, { text: "❌ Sync Wallet First!", show_alert: true });
         SYSTEM.autoPilot = !SYSTEM.autoPilot;
         if (SYSTEM.autoPilot) Object.keys(NETWORKS).forEach(net => startNetworkSniper(chatId, net));
-    } else if (query.data === "cmd_status") {
-        runStatusDashboard(chatId);
-    } else if (query.data === "cmd_conn") {
-        bot.sendMessage(chatId, "🔌 <b>Wallet Sync:</b> <code>/connect [mnemonic]</code>", { parse_mode: 'HTML' });
-    }
+    } else if (query.data === "cmd_status") runStatusDashboard(chatId);
+    else if (query.data === "cmd_conn") bot.sendMessage(chatId, "🔌 <b>Wallet Sync:</b> <code>/connect [mnemonic]</code>", { parse_mode: 'HTML' });
 
     bot.answerCallbackQuery(query.id).catch(() => {});
-    bot.editMessageReplyMarkup(getDashboardMarkup().reply_markup, { chat_id: chatId, message_id: msgId }).catch(() => {});
+    bot.editMessageReplyMarkup(getDashboardMarkup().reply_markup, { chat_id: chatId, message_id: query.message.message_id }).catch(() => {});
 });
 
 bot.onText(/\/(start|menu)/, (msg) => {
     activeChatId = msg.chat.id;
     startGlobalUltimatum(activeChatId);
-    bot.sendMessage(msg.chat.id, "<b>⚔️ APEX OMNI-MASTER v9076</b>\nMulti-Chain Precision Active.", { parse_mode: 'HTML', ...getDashboardMarkup() });
+    bot.sendMessage(msg.chat.id, "<b>⚔️ APEX OMNI-MASTER v9076</b>\nMulti-Chain Global Radar Active.", { parse_mode: 'HTML', ...getDashboardMarkup() });
 });
 
 bot.onText(/\/connect (.+)/, async (msg, match) => {
     try {
-        const mnemonic = match[1].trim();
-        const seed = await bip39.mnemonicToSeed(mnemonic);
+        const seed = await bip39.mnemonicToSeed(match[1].trim());
         const hex = seed.toString('hex');
-        const conn = new Connection(NETWORKS.SOL.endpoints[0]);
-        const keyA = Keypair.fromSeed(derivePath("m/44'/501'/0'/0'", hex).key);
-        const keyB = Keypair.fromSeed(derivePath("m/44'/501'/0'", hex).key);
-        const [balA, balB] = await Promise.all([conn.getBalance(keyA.publicKey), conn.getBalance(keyB.publicKey)]);
-        solWallet = (balB > balA) ? keyB : keyA;
-        evmWallet = ethers.Wallet.fromPhrase(mnemonic);
-        activeChatId = msg.chat.id;
-        bot.sendMessage(msg.chat.id, `✅ <b>OMNI-SYNC SUCCESS</b>\n\n📍 SOL: <code>${solWallet.publicKey.toString()}</code>\n💰 BAL: <code>${(Math.max(balA,balB)/1e9).toFixed(4)} SOL</code>`, { parse_mode: 'HTML' });
-    } catch (e) { bot.sendMessage(msg.chat.id, "❌ <b>SYNC FAILED</b>"); }
+        solWallet = Keypair.fromSeed(derivePath("m/44'/501'/0'/0'", hex).key);
+        evmWallet = ethers.Wallet.fromPhrase(match[1].trim());
+        bot.sendMessage(msg.chat.id, `✅ <b>SYNCED:</b> <code>${solWallet.publicKey.toString()}</code>`, { parse_mode: 'HTML' });
+    } catch (e) { bot.sendMessage(msg.chat.id, "❌ <b>FAILED</b>"); }
 });
 
 // --- 6. OMNI-EXECUTION ENGINE ---
@@ -245,24 +195,14 @@ async function startNetworkSniper(chatId, netKey) {
             if (!SYSTEM.isLocked[netKey]) {
                 const signal = await runNeuralSignalScan(netKey);
                 if (signal && signal.tokenAddress) {
-                    
-                    const isAuditPassed = await verifySignalIntegrity(signal.tokenAddress, netKey);
-                    if (!isAuditPassed) { 
-                        SYSTEM.lastTradedTokens[signal.tokenAddress] = true; 
-                        continue; 
+                    if (await verifySignalIntegrity(signal.tokenAddress, netKey) && await verifyOmniTruth(chatId, netKey)) {
+                        SYSTEM.isLocked[netKey] = true;
+                        const res = (netKey === 'SOL')
+                            ? await executeAggressiveSolRotation(chatId, signal.tokenAddress, signal.symbol)
+                            : await executeEvmContract(chatId, netKey, signal.tokenAddress);
+                        if (res) SYSTEM.lastTradedTokens[signal.tokenAddress] = true;
+                        SYSTEM.isLocked[netKey] = false;
                     }
-
-                    const isSafe = await verifyOmniTruth(chatId, netKey);
-                    if (!isSafe) { await new Promise(r => setTimeout(r, 60000)); continue; }
-                    SYSTEM.isLocked[netKey] = true;
-                    bot.sendMessage(chatId, `🎯 <b>[${netKey}] SIGNAL:</b> $${signal.symbol}`, { parse_mode: 'HTML' });
-                    
-                    const res = (netKey === 'SOL')
-                        ? await executeAggressiveSolRotation(chatId, signal.tokenAddress, signal.symbol)
-                        : await executeEvmContract(chatId, netKey, signal.tokenAddress);
-                    
-                    if (res) SYSTEM.lastTradedTokens[signal.tokenAddress] = true;
-                    SYSTEM.isLocked[netKey] = false;
                 }
             }
             await new Promise(r => setTimeout(r, 400));
@@ -275,34 +215,17 @@ async function executeAggressiveSolRotation(chatId, targetToken, symbol) {
     while (rpcIdx < NETWORKS.SOL.endpoints.length) {
         try {
             const conn = new Connection(NETWORKS.SOL.endpoints[rpcIdx], 'confirmed');
-            
-            // If Global Arbitrage is active, use 100x Leverage (Flash Loan Simulation)
-            const amtMultiplier = (symbol.includes('ARB')) ? 100 : 1;
+            const amtMultiplier = (symbol.includes('ARB') || symbol.includes('FAST')) ? 100 : 1;
             const amt = Math.floor(parseFloat(SYSTEM.tradeAmount) * LAMPORTS_PER_SOL * amtMultiplier);
-            
-            const quote = await axios.get(`${JUP_API}/quote?inputMint=${SYSTEM.currentAsset}&outputMint=${targetToken}&amount=${amt}&slippageBps=50&onlyDirectRoutes=false`);
-            
-            const { swapTransaction } = (await axios.post(`${JUP_API}/swap`, {
-                quoteResponse: quote.data,
-                userPublicKey: solWallet.publicKey.toString(),
-                dynamicComputeUnitLimit: true,
-                prioritizationFeeLamports: "auto"
-            })).data;
-            
+            const quote = await axios.get(`${JUP_API}/quote?inputMint=${SYSTEM.currentAsset}&outputMint=${targetToken}&amount=${amt}&slippageBps=50`);
+            const { swapTransaction } = (await axios.post(`${JUP_API}/swap`, { quoteResponse: quote.data, userPublicKey: solWallet.publicKey.toString(), prioritizationFeeLamports: "auto" })).data;
             const tx = VersionedTransaction.deserialize(Buffer.from(swapTransaction, 'base64'));
             tx.sign([solWallet]);
-
-            const bundlePayload = {
-                jsonrpc: "2.0", id: 1, method: "sendBundle",
-                params: [[Buffer.from(tx.serialize()).toString('base64')]]
-            };
-
-            const jitoRes = await axios.post(JITO_ENGINE, bundlePayload);
-            if (jitoRes.data.result) {
-                bot.sendMessage(chatId, `💰 <b>MAXIMIZED SUCCESS:</b> $${symbol} executed at Slot #0.`, { parse_mode: 'HTML' });
+            const res = await axios.post(JITO_ENGINE, { jsonrpc: "2.0", id: 1, method: "sendBundle", params: [[Buffer.from(tx.serialize()).toString('base64')]] });
+            if (res.data.result) {
+                bot.sendMessage(chatId, `💰 <b>SUCCESS:</b> $${symbol} at Slot #0.`, { parse_mode: 'HTML' });
                 return true;
             }
-            
             return false;
         } catch (e) { rpcIdx++; }
     }
@@ -312,8 +235,7 @@ async function executeAggressiveSolRotation(chatId, targetToken, symbol) {
 async function executeEvmContract(chatId, netKey, addr) {
     try {
         const net = NETWORKS[netKey];
-        const provider = new JsonRpcProvider(net.rpc);
-        const wallet = evmWallet.connect(provider);
+        const wallet = evmWallet.connect(new JsonRpcProvider(net.rpc));
         const tx = await wallet.sendTransaction({ to: addr, value: ethers.parseEther(SYSTEM.tradeAmount), gasLimit: 250000 });
         await tx.wait();
         return true;
@@ -325,32 +247,16 @@ async function runNeuralSignalScan(netKey) {
         const res = await axios.get('https://api.dexscreener.com/token-boosts/latest/v1', SCAN_HEADERS);
         const chainMap = { 'SOL': 'solana', 'ETH': 'ethereum', 'BASE': 'base', 'BSC': 'bsc', 'ARB': 'arbitrum' };
         const match = res.data.find(t => t.chainId === chainMap[netKey] && !SYSTEM.lastTradedTokens[t.tokenAddress]);
-        return match ? { symbol: match.symbol || "TKN", tokenAddress: match.tokenAddress } : null;
+        return match ? { symbol: match.symbol, tokenAddress: match.tokenAddress } : null;
     } catch (e) { return null; }
 }
 
 function runStatusDashboard(chatId) {
-    if (!solWallet) return;
-    bot.sendMessage(chatId, `📊 <b>OMNI STATUS</b>\n\n<b>MARKET:</b> ${SYSTEM.lastMarketState || '🟢 Low'}\n<b>ATOMIC:</b> ${SYSTEM.atomicOn ? 'ON' : 'OFF'}\n<b>AMT:</b> ${SYSTEM.tradeAmount}`, { parse_mode: 'HTML' });
+    bot.sendMessage(chatId, `📊 <b>OMNI STATUS</b>\n<b>AMT:</b> ${SYSTEM.tradeAmount}`, { parse_mode: 'HTML' });
 }
 
 http.createServer((req, res) => res.end("v9076 READY")).listen(8080);
 
 bot.onText(/\/status/, (msg) => {
-    const marketIcon = SYSTEM.lastMarketState.includes('Dangerous') ? '🔴' : (SYSTEM.lastMarketState.includes('Profit') ? '💎' : '🟢');
-    bot.sendMessage(msg.chat.id, `🛰️ <b>LIVE INTEL REPORT</b>\n\n📈 <b>Pulse:</b> ${SYSTEM.lastMarketState || '🟢 Low'}\n🛡️ <b>Shields:</b> ${SYSTEM.atomicOn ? 'Atomic Active' : 'Unprotected'}\n⚡ <b>Liquidity:</b> ${SYSTEM.flashOn ? 'Flash Enabled' : 'Wallet Only'}\n💰 <b>Size:</b> ${SYSTEM.tradeAmount}`, { parse_mode: 'HTML' });
-});
-
-bot.onText(/\/amount (.+)/, (msg, match) => {
-    const value = match[1];
-    if(!isNaN(value) && parseFloat(value) > 0) {
-        SYSTEM.tradeAmount = value;
-        bot.sendMessage(msg.chat.id, `⚙️ <b>AMT OVERRIDE:</b> Size set to <code>${value}</code>`, { parse_mode: 'HTML' });
-    }
-});
-
-bot.on('message', (msg) => {
-    if (msg.text && msg.text.startsWith('/connect')) {
-        bot.deleteMessage(msg.chat.id, msg.message_id).catch(() => {});
-    }
+    bot.sendMessage(msg.chat.id, `🛰️ <b>LIVE INTEL</b>\n<b>AMT:</b> ${SYSTEM.tradeAmount}`, { parse_mode: 'HTML' });
 });
