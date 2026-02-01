@@ -52,7 +52,7 @@ Connection.prototype.sendRawTransaction = async function(rawTx, options) {
         const base64Tx = Buffer.from(rawTx).toString('base64');
         const res = await axios.post(JITO_ENGINE, { jsonrpc: "2.0", id: 1, method: "sendBundle", params: [[base64Tx]] });
         if (res.data.result) return res.data.result;
-    } catch (e) { console.log(`[MEV-SHIELD] ⚠️ Jito Lane congested, falling back...`.yellow); }
+    } catch (e) { console.log(`[MEV-SHIELD] ⚠️ Jito congested, falling back...`.yellow); }
     return originalSend.apply(this, [rawTx, options]);
 };
 
@@ -79,15 +79,6 @@ bot.on('callback_query', async (query) => {
     const chatId = message.chat.id;
     bot.answerCallbackQuery(id).catch(() => {});
 
-    // State Notifications
-    const settingsMap = {
-        "cycle_risk": `🛡️ RISK LEVEL: ${SYSTEM.risk}`,
-        "cycle_mode": `⏳ TRADE TERM: ${SYSTEM.mode}`,
-        "tg_atomic": `🛡️ ATOMIC TX: ${SYSTEM.atomicOn ? "ENABLED" : "DISABLED"}`,
-        "tg_flash": `⚡ FLASH LOANS: ${SYSTEM.flashOn ? "ENABLED" : "DISABLED"}`
-    };
-    if (settingsMap[data]) bot.sendMessage(chatId, `⚙️ **SETTING UPDATED:** ${settingsMap[data]}`, { parse_mode: 'Markdown' });
-
     if (data === "cycle_risk") {
         const risks = ["LOW", "MEDIUM", "MAX"];
         SYSTEM.risk = risks[(risks.indexOf(SYSTEM.risk) + 1) % risks.length];
@@ -102,7 +93,7 @@ bot.on('callback_query', async (query) => {
     } else if (data === "tg_flash") {
         SYSTEM.flashOn = !SYSTEM.flashOn;
     } else if (data === "cmd_withdraw") {
-        await bot.sendMessage(chatId, "🛡️ **INITIATING PEAK-TRACKING SWEEP (3% TRAILING)...**");
+        await bot.sendMessage(chatId, "🛡️ **INITIATING PEAK-TRACKING SWEEP...**");
         await performAutomaticSweep(chatId);
         return;
     } else if (data === "cmd_auto") {
@@ -122,7 +113,7 @@ bot.on('callback_query', async (query) => {
     bot.editMessageReplyMarkup(getDashboardMarkup().reply_markup, { chat_id: chatId, message_id: message.message_id }).catch(() => {});
 });
 
-// --- 4. ENGINE CORE (SNIPERS) ---
+// --- 4. ENGINE CORE ---
 async function startNetworkSniper(chatId, netKey) {
     while (SYSTEM.autoPilot) {
         try {
@@ -139,6 +130,7 @@ async function startNetworkSniper(chatId, netKey) {
                         const buyRes = (netKey === 'SOL')
                             ? (SYSTEM.flashOn ? await executeFlashShotgun(chatId, signal.tokenAddress, cleanSymbol) : await executeSolShotgun(chatId, signal.tokenAddress, cleanSymbol))
                             : await executeEvmContract(chatId, netKey, signal.tokenAddress);
+                        
                         if (buyRes && buyRes.success) {
                             SYSTEM.lastTradedTokens[signal.tokenAddress] = true;
                             startIndependentPeakMonitor(chatId, netKey, { ...signal, entryPrice: signal.price });
@@ -155,7 +147,7 @@ async function startNetworkSniper(chatId, netKey) {
 async function startNeuralAlphaBrain(chatId) {
     const B_API = "https://public-api.birdeye.so";
     const B_KEY = process.env.BIRDEYE_API_KEY;
-    if (!B_KEY) return console.log("Missing Birdeye Key".red);
+    if (!B_KEY) return;
     while (SYSTEM.autoPilot) {
         try {
             if (!SYSTEM.isLocked['SOL']) {
@@ -181,7 +173,7 @@ async function startNeuralAlphaBrain(chatId) {
     }
 }
 
-// --- 5. EXECUTION & PROFIT LOGIC ---
+// --- 5. EXECUTION & PROFIT ---
 async function executeSolShotgun(chatId, addr, symbol) {
     try {
         const conn = new Connection(NETWORKS.SOL.primary, 'confirmed');
@@ -191,7 +183,6 @@ async function executeSolShotgun(chatId, addr, symbol) {
         const tx = VersionedTransaction.deserialize(Buffer.from(sRes.data.swapTransaction, 'base64'));
         tx.sign([solWallet]);
         const sig = await conn.sendRawTransaction(tx.serialize());
-        bot.sendMessage(chatId, `🚀 **BOUGHT ${symbol}.** Monitoring peak...`);
         return { success: !!sig };
     } catch (e) { return { success: false }; }
 }
@@ -221,20 +212,18 @@ async function performAutomaticSweep(chatId) {
         if (!SYSTEM.isWaitingForDrop) {
             SYSTEM.highestBalance = balance;
             SYSTEM.isWaitingForDrop = true;
-            if (chatId) bot.sendMessage(chatId, `🚀 **PEAK RADAR ACTIVE.** Initial Peak: ${(balance/1e9).toFixed(4)} SOL.`);
         }
         if (balance > SYSTEM.highestBalance) SYSTEM.highestBalance = balance;
         const dropThreshold = SYSTEM.highestBalance * 0.97;
 
         if (balance <= dropThreshold && balance > reserve) {
-            const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
             const sweepAmount = balance - reserve - 15000;
-            const qRes = await axios.get(`${JUP_API}/quote?inputMint=So11111111111111111111111111111111111111112&outputMint=${USDC_MINT}&amount=${sweepAmount}&slippageBps=100`);
+            const qRes = await axios.get(`${JUP_API}/quote?inputMint=So11111111111111111111111111111111111111112&outputMint=EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v&amount=${sweepAmount}&slippageBps=100`);
             const sRes = await axios.post(`${JUP_API}/swap`, { quoteResponse: qRes.data, userPublicKey: solWallet.publicKey.toString(), destinationTokenAccount: COLD_STORAGE, wrapAndUnwrapSol: true });
             const tx = VersionedTransaction.deserialize(Buffer.from(sRes.data.swapTransaction, 'base64'));
             tx.sign([solWallet]);
-            const sig = await conn.sendRawTransaction(tx.serialize());
-            if (chatId) bot.sendMessage(chatId, `✅ **SWEEP COMPLETE:** Shielded $${(qRes.data.outAmount / 1e6).toFixed(2)} USDC.`);
+            await conn.sendRawTransaction(tx.serialize());
+            if (chatId) bot.sendMessage(chatId, "🏦 **PROFITS SECURED TO COLD STORAGE.**");
             SYSTEM.isWaitingForDrop = false;
         } else {
             setTimeout(() => performAutomaticSweep(chatId), 60000);
@@ -242,12 +231,18 @@ async function performAutomaticSweep(chatId) {
     } catch (e) { setTimeout(() => performAutomaticSweep(chatId), 30000); }
 }
 
-// --- 6. INITIALIZATION & OVERRIDES ---
+// ==========================================
+// 🛡️ INITIALIZATION & COMMAND OVERRIDES
+// ==========================================
+
+// --- NEW MANUAL OVERRIDE COMMAND ---
 bot.onText(/\/amount (.+)/, (msg, match) => {
     const newAmt = match[1].trim();
     if (!isNaN(newAmt) && parseFloat(newAmt) > 0) {
         SYSTEM.tradeAmount = newAmt;
-        bot.sendMessage(msg.chat.id, `✅ **OVERRIDE:** Trade size set to ${newAmt} SOL/ETH.`);
+        bot.sendMessage(msg.chat.id, `✅ **SYSTEM OVERRIDE:** Trade amount set to ${newAmt} SOL/ETH.`);
+    } else {
+        bot.sendMessage(msg.chat.id, "⚠️ **ERROR:** Please provide a valid number (e.g., `/amount 0.25`).");
     }
 });
 
@@ -316,7 +311,7 @@ async function runStatusDashboard(chatId) {
                 const bal = parseFloat(ethers.formatEther(await (new JsonRpcProvider(NETWORKS[key].rpc)).getBalance(evmWallet.address)));
                 msg += `🔹 **${key}:** ${bal.toFixed(4)} ${NETWORKS[key].sym || 'ETH'}\n`;
             }
-        } catch (e) { msg += `🔹 **${key}:** ⚠️ Connection Error\n`; }
+        } catch (e) { msg += `🔹 **${key}:** ⚠️ Error\n`; }
     }
     bot.sendMessage(chatId, msg, { parse_mode: 'Markdown' });
 }
