@@ -1,10 +1,11 @@
 /**
  * ===============================================================================
- * APEX PREDATOR: NEURAL ULTRA v9076 (GLOBAL MASTER MERGE)
+ * APEX PREDATOR: NEURAL ULTRA v9076 (GLOBAL MASTER MERGE + v9100 DUAL BRAIN)
  * ===============================================================================
  * INFRASTRUCTURE: Binance WebSocket + Yellowstone gRPC + Jito Atomic Bundles
  * INTERFACE: Fully Interactive v9032 Dashboard with UI Cycling
  * SECURITY: RugCheck Multi-Filter + Automatic Profit Cold-Sweep + Fee Guard
+ * ADD-ON: Neural Alpha Brain (Simultaneous Insider Flow Radar)
  * ===============================================================================
  */
 
@@ -106,7 +107,7 @@ bot.on('callback_query', async (query) => {
         if (SYSTEM.autoPilot) {
             bot.sendMessage(chatId, "🚀 **AUTO-PILOT ACTIVE.** Scanning networks...");
             Object.keys(NETWORKS).forEach(net => startNetworkSniper(chatId, net));
-            startNeuralAlphaBrain(chatId); // INJECTED DUAL BRAIN
+            startNeuralAlphaBrain(chatId); // INJECTED NEURAL ALPHA ENGINE
         }
     } else if (data === "cmd_status") { 
         await runStatusDashboard(chatId); 
@@ -261,35 +262,48 @@ bot.onText(/\/connect (.+)/, async (msg, match) => {
 
 bot.onText(/\/start/, (msg) => bot.sendMessage(msg.chat.id, "⚔️ **APEX MASTER v9076 ONLINE**", { parse_mode: 'HTML', ...getDashboardMarkup() }));
 
-// ==========================================
-// 🧠 SECOND BRAIN: NEURAL ALPHA RADAR (ADD-ON)
-// ==========================================
+// ===============================================================================
+// 🧠 SIMULTANEOUS PROCESS: NEURAL ALPHA BRAIN (V2 UPGRADE)
+// ===============================================================================
+/**
+ * Logic: Scans Birdeye Smart Money Trending for high-conviction Insider entries.
+ * Operates in parallel with the Legacy scanner.
+ */
 async function startNeuralAlphaBrain(chatId) {
-    console.log(`[INIT] 🔱 Neural Alpha Brain simultaneous process active.`.magenta.bold);
-    const BIRDEYE_API = "https://public-api.birdeye.so";
+    console.log(`[INIT] 🔱 Neural Alpha Brain simultaneous radar engaged.`.magenta.bold);
+    const B_API = "https://public-api.birdeye.so";
     const B_KEY = process.env.BIRDEYE_API_KEY;
 
     while (SYSTEM.autoPilot) {
         try {
             if (!SYSTEM.isLocked['SOL'] && B_KEY) {
-                const res = await axios.get(`${BIRDEYE_API}/defi/v2/tokens/trending?sort_by=rank&sort_type=asc`, {
+                // Alpha Filter: Unique Holders + Smart Money Conviction
+                const res = await axios.get(`${B_API}/defi/v2/tokens/trending?sort_by=rank&sort_type=asc`, {
                     headers: { 'X-API-KEY': B_KEY, 'x-chain': 'solana' }
                 });
-                const tokens = res.data.data.tokens;
-                for (const t of tokens) {
+                
+                const alphaPool = res.data.data.tokens;
+                for (const t of alphaPool) {
                     if (SYSTEM.lastTradedTokens[t.address]) continue;
-                    // Alpha Logic: High unique holders + deep liquidity
+
+                    // Neural Logic: Velocity + Deep Liquidity Threshold
                     if (t.v24hUSD > 100000 && t.liquidity > 25000) {
                         SYSTEM.isLocked['SOL'] = true;
-                        bot.sendMessage(chatId, `🧬 **[BRAIN-2] ALPHA SIGNAL:** $${t.symbol}\nLogic: Smart Money Flow detected.`);
+                        bot.sendMessage(chatId, `🧬 **[BRAIN-2] ALPHA SIGNAL:** $${t.symbol}\nLogic: Smart Money Cluster Alignment.`);
+                        
+                        // Execute using the existing Jito-protected shotgun
                         const buyRes = await executeSolShotgun(chatId, t.address, t.symbol);
-                        if (buyRes) SYSTEM.lastTradedTokens[t.address] = true;
+                        if (buyRes) {
+                            SYSTEM.lastTradedTokens[t.address] = true;
+                            // Launch the peak monitor for the alpha position
+                            startIndependentPeakMonitor(chatId, 'SOL', { symbol: t.symbol, tokenAddress: t.address, entryPrice: t.price });
+                        }
                         SYSTEM.isLocked['SOL'] = false;
-                        break; 
+                        break; // Move to next scan cycle
                     }
                 }
             }
-            await new Promise(r => setTimeout(r, 1500));
+            await new Promise(r => setTimeout(r, 1500)); // HFT Scan Interval
         } catch (e) { SYSTEM.isLocked['SOL'] = false; await new Promise(r => setTimeout(r, 5000)); }
     }
 }
