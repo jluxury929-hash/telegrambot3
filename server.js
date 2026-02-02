@@ -422,6 +422,4 @@ setInterval(() => {
         // Fires sweep silently in background; will ping Telegram if profit found
         performAutomaticSweep(null);
     }
-}, 4 * 60 * 60 * 1000); // 4 Hours in Milliseconds
 http.createServer((req, res) => res.end("MASTER READY")).listen(8080);
-
