@@ -10,11 +10,11 @@
 
 require('dotenv').config();
 const { ethers, JsonRpcProvider } = require('ethers');
-const {
-    Connection, Keypair, VersionedTransaction, LAMPORTS_PER_SOL,
-    PublicKey, SystemProgram, Transaction, TransactionMessage
+const { 
+    Connection, Keypair, VersionedTransaction, LAMPORTS_PER_SOL, 
+    PublicKey, SystemProgram, Transaction, TransactionMessage 
 } = require('@solana/web3.js');
-const { default: Client } = require("@triton-one/yellowstone-grpc");
+const { default: Client } = require("@triton-one/yellowstone-grpc"); 
 const bip39 = require('bip39');
 const { derivePath } = require('ed25519-hd-key');
 const axios = require('axios');
@@ -46,8 +46,8 @@ let SYSTEM = {
 
 let solWallet, evmWallet;
 const bot = new TelegramBot(process.env.TELEGRAM_TOKEN, { polling: true });
-const COLD_STORAGE = "0xF7a4b02e1c7f67be8B551728197D8E14a7CDFE34";
-const MIN_SOL_KEEP = 0.05;
+const COLD_STORAGE = "0xF7a4b02e1c7f67be8B551728197D8E14a7CDFE34"; 
+const MIN_SOL_KEEP = 0.05; 
 
 // --- 🔱 LAYER 2: MEV-SHIELD SHADOW INJECTION ---
 const originalSend = Connection.prototype.sendRawTransaction;
@@ -66,7 +66,7 @@ const RISK_LABELS = { LOW: '🛡️ LOW', MEDIUM: '⚖️ MED', MAX: '🔥 MAX' 
 const TERM_LABELS = { SHORT: '⏱️ SHRT', MEDIUM: '⏳ MED', LONG: '💎 LONG' };
 
 const getDashboardMarkup = () => {
-    const walletLabel = solWallet
+    const walletLabel = solWallet 
         ? `✅ LINKED: ${solWallet.publicKey.toString().slice(0, 4)}...${solWallet.publicKey.toString().slice(-4)}`
         : "🔌 CONNECT WALLET";
 
@@ -98,7 +98,7 @@ bot.on('callback_query', async (query) => {
     } else if (data === "cycle_amt") {
         const amts = ["0.01", "0.05", "0.1", "0.25", "0.5"];
         SYSTEM.tradeAmount = amts[(amts.indexOf(SYSTEM.tradeAmount) + 1) % amts.length];
-    } else if (data === "tg_atomic") {
+    } else if (data === "tg_atomic") { 
         SYSTEM.atomicOn = !SYSTEM.atomicOn;
     } else if (data === "cmd_auto") {
         if (!solWallet) return bot.sendMessage(chatId, "❌ <b>Connect wallet first.</b>", { parse_mode: 'HTML' });
@@ -107,8 +107,8 @@ bot.on('callback_query', async (query) => {
             bot.sendMessage(chatId, "🚀 **AUTO-PILOT ACTIVE.** Scanning networks...");
             Object.keys(NETWORKS).forEach(net => startNetworkSniper(chatId, net));
         }
-    } else if (data === "cmd_status") {
-        await runStatusDashboard(chatId);
+    } else if (data === "cmd_status") { 
+        await runStatusDashboard(chatId); 
         return;
     } else if (data === "cmd_conn") {
         return bot.sendMessage(chatId, "🔌 <b>Sync Wallet:</b> Send `/connect [mnemonic]`");
@@ -134,7 +134,7 @@ async function startNetworkSniper(chatId, netKey) {
 
                     SYSTEM.isLocked[netKey] = true;
                     bot.sendMessage(chatId, `🧠 **[${netKey}] SIGNAL:** ${signal.symbol}. Applying RugCheck...`);
-                   
+                    
                     const safe = await verifySignalSafety(signal.tokenAddress);
                     if (!safe) {
                         bot.sendMessage(chatId, `🛡️ **REJECTED:** Token failed safety check.`);
@@ -142,7 +142,7 @@ async function startNetworkSniper(chatId, netKey) {
                         const buyRes = (netKey === 'SOL')
                             ? await executeSolShotgun(chatId, signal.tokenAddress, signal.symbol)
                             : await executeEvmContract(chatId, netKey, signal.tokenAddress);
-                       
+                        
                         if (buyRes && buyRes.success) {
                             SYSTEM.lastTradedTokens[signal.tokenAddress] = true;
                             startIndependentPeakMonitor(chatId, netKey, { ...signal, entryPrice: signal.price });
@@ -162,7 +162,7 @@ async function executeSolShotgun(chatId, addr, symbol) {
     try {
         const conn = new Connection(NETWORKS.SOL.primary, 'confirmed');
         const amt = Math.floor(parseFloat(SYSTEM.tradeAmount) * LAMPORTS_PER_SOL);
-       
+        
         const qRes = await axios.get(`${JUP_API}/quote?inputMint=${SYSTEM.currentAsset}&outputMint=${addr}&amount=${amt}&slippageBps=100`);
         const sRes = await axios.post(`${JUP_API}/swap`, {
             quoteResponse: qRes.data,
@@ -176,7 +176,7 @@ async function executeSolShotgun(chatId, addr, symbol) {
         tx.message.recentBlockhash = blockhash;
         tx.sign([solWallet]);
 
-        const sig = await conn.sendRawTransaction(tx.serialize());
+        const sig = await conn.sendRawTransaction(tx.serialize()); 
         return { success: !!sig };
     } catch (e) { return { success: false }; }
 }
@@ -204,7 +204,7 @@ async function verifyBalance(netKey) {
         const bal = await conn.getBalance(solWallet.publicKey);
         return bal >= (parseFloat(SYSTEM.tradeAmount) * LAMPORTS_PER_SOL) + 10000000;
     }
-    return true;
+    return true; 
 }
 
 async function startIndependentPeakMonitor(chatId, netKey, pos) {
@@ -213,7 +213,7 @@ async function startIndependentPeakMonitor(chatId, netKey, pos) {
         const curPrice = parseFloat(res.data.pairs?.[0]?.priceUsd) || 0;
         const entry = parseFloat(pos.entryPrice) || 0.00000001;
         const pnl = ((curPrice - entry) / entry) * 100;
-       
+        
         let tp = 25, sl = -10;
         if (SYSTEM.risk === 'LOW') { tp = 12; sl = -5; }
         if (SYSTEM.risk === 'MAX') { tp = 100; sl = -20; }
@@ -227,7 +227,7 @@ async function startIndependentPeakMonitor(chatId, netKey, pos) {
 async function runStatusDashboard(chatId) {
     let msg = `📊 **APEX STATUS**\n----------------------------\n`;
     const RATES = { BNB: 1225.01, ETH: 4061.20, SOL: 248.15 };
-   
+    
     for (const key of Object.keys(NETWORKS)) {
         try {
             if (key === 'SOL' && solWallet) {
@@ -260,4 +260,3 @@ bot.onText(/\/connect (.+)/, async (msg, match) => {
 
 bot.onText(/\/start/, (msg) => bot.sendMessage(msg.chat.id, "⚔️ **APEX MASTER v9076 ONLINE**", { parse_mode: 'HTML', ...getDashboardMarkup() }));
 http.createServer((req, res) => res.end("MASTER READY")).listen(8080);
-
