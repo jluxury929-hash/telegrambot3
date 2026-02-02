@@ -42,8 +42,6 @@ let SYSTEM = {
     lastTradedTokens: {}, isLocked: {}, atomicOn: true, flashOn: false,
     jitoTip: 2000000, currentAsset: 'So11111111111111111111111111111111111111112',
     lastBinancePrice: 0, minLiquidity: 15000, velocityThreshold: 1.8
-    highestBalance: 0,
-    isWaitingForDrop: false
 };
 
 let solWallet, evmWallet;
@@ -74,12 +72,11 @@ const getDashboardMarkup = () => {
 
     return {
         reply_markup: {
-        inline_keyboard: [
+            inline_keyboard: [
                 [{ text: SYSTEM.autoPilot ? "🛑 STOP AUTO-PILOT" : "🚀 START AUTO-PILOT", callback_data: "cmd_auto" }],
                 [{ text: `💰 AMT: ${SYSTEM.tradeAmount}`, callback_data: "cycle_amt" }, { text: "📊 STATUS", callback_data: "cmd_status" }],
                 [{ text: `🛡️ RISK: ${RISK_LABELS[SYSTEM.risk] || '⚖️ MED'}`, callback_data: "cycle_risk" }, { text: `⏳ TERM: ${TERM_LABELS[SYSTEM.mode] || '⏱️ SHRT'}`, callback_data: "cycle_mode" }],
-                [{ text: SYSTEM.atomicOn ? "🛡️ ATOMIC: ON" : "🛡️ ATOMIC: OFF", callback_data: "tg_atomic" }, { text: SYSTEM.flashOn ? "⚡ FLASH: ON" : "⚡ FLASH: OFF", callback_data: "tg_flash" }],
-                [{ text: walletLabel, callback_data: "cmd_conn" }],
+                [{ text: SYSTEM.atomicOn ? "🛡️ ATOMIC: ON" : "🛡️ ATOMIC: OFF", callback_data: "tg_atomic" }, { text: walletLabel, callback_data: "cmd_conn" }],
                 [{ text: "🏦 WITHDRAW PROFITS", callback_data: "cmd_withdraw" }]
             ]
         }
@@ -91,16 +88,6 @@ bot.on('callback_query', async (query) => {
     const { data, message, id } = query;
     const chatId = message.chat.id;
     bot.answerCallbackQuery(id).catch(() => {});
-   
-// --- 🔔 DYNAMIC NOTIFICATION OBSERVER ---
-    const settingsMap = {
-        "cycle_risk": `🛡️ RISK LEVEL: ${SYSTEM.risk}`,
-        "cycle_mode": `⏳ TRADE TERM: ${SYSTEM.mode}`,
-        "tg_atomic": `🛡️ ATOMIC TX: ${SYSTEM.atomicOn ? "ENABLED" : "DISABLED"}`,
-        "tg_flash": `⚡ FLASH LOANS: ${SYSTEM.flashOn ? "ENABLED" : "DISABLED"}`
-    };
-   
-    if (settingsMap[data]) bot.sendMessage(chatId, `⚙️ **SETTING UPDATED:** ${settingsMap[data]}`, { parse_mode: 'Markdown' });
 
     if (data === "cycle_risk") {
         const risks = ["LOW", "MEDIUM", "MAX"];
@@ -113,13 +100,6 @@ bot.on('callback_query', async (query) => {
         SYSTEM.tradeAmount = amts[(amts.indexOf(SYSTEM.tradeAmount) + 1) % amts.length];
     } else if (data === "tg_atomic") {
         SYSTEM.atomicOn = !SYSTEM.atomicOn;
-        } else if (data === "tg_flash") {
-        SYSTEM.flashOn = !SYSTEM.flashOn;
-        bot.sendMessage(chatId, `⚡ **FLASH LOANS:** ${SYSTEM.flashOn ? "ENABLED (10x LEVERAGE)" : "DISABLED"}`);
-      } else if (data === "cmd_withdraw") {
-        await bot.sendMessage(chatId, "🛡️ **INITIATING SECURE USDC CONVERSION...**");
-        await performAutomaticSweep(chatId);
-        return;
     } else if (data === "cmd_auto") {
         if (!solWallet) return bot.sendMessage(chatId, "❌ <b>Connect wallet first.</b>", { parse_mode: 'HTML' });
         SYSTEM.autoPilot = !SYSTEM.autoPilot;
@@ -127,57 +107,6 @@ bot.on('callback_query', async (query) => {
             bot.sendMessage(chatId, "🚀 **AUTO-PILOT ACTIVE.** Scanning networks...");
             Object.keys(NETWORKS).forEach(net => startNetworkSniper(chatId, net));
         }
-async function startNeuralAlphaBrain(chatId) {
-    const B_API = "https://public-api.birdeye.so";
-    const B_KEY = process.env.BIRDEYE_API_KEY;
-    if (!B_KEY) return console.log("[ALPHA] ⚠️ Missing BIRDEYE_API_KEY in .env".yellow);
-
-    console.log(`[INIT] 🔱 Neural Alpha Brain simultaneous radar engaged.`.magenta.bold);
-
-    while (SYSTEM.autoPilot) {
-        try {
-            // Respect the global lock so Brain 1 and Brain 2 don't collide on execution
-            if (!SYSTEM.isLocked['SOL']) {
-                // World's Best Logic: Query Birdeye V2 Trending (Unique Insider Activity)
-                const res = await axios.get(`${B_API}/defi/v2/tokens/trending?sort_by=rank&sort_type=asc`, {
-                    headers: { 'X-API-KEY': B_KEY, 'x-chain': 'solana' }
-                });
-               
-                const alphaPool = res.data.data.tokens;
-                for (const t of alphaPool) {
-                    // Skip if Brain 1 already traded this
-                    if (SYSTEM.lastTradedTokens[t.address]) continue;
-
-                    // Insider Alignment Filter: High Volume + Sufficient Liquidity Depth
-                    if (t.v24hUSD > 100000 && t.liquidity > 25000) {
-                        SYSTEM.isLocked['SOL'] = true;
-                        bot.sendMessage(chatId, `🧬 **[BRAIN-2] ALPHA DETECTED:** $${t.symbol}\nLogic: Smart Money Cluster Alignment.`);
-                       
-                        // Use your EXISTING execution engine (v9076 Shotgun)
-                        const buyRes = await executeSolShotgun(chatId, t.address, t.symbol);
-                       
-                        if (buyRes && buyRes.success) {
-                            SYSTEM.lastTradedTokens[t.address] = true;
-                            // Launch your EXISTING independent monitor
-                            startIndependentPeakMonitor(chatId, 'SOL', {
-                                symbol: t.symbol,
-                                tokenAddress: t.address,
-                                entryPrice: t.price
-                            });
-                        }
-                        SYSTEM.isLocked['SOL'] = false;
-                        break;
-                    }
-                }
-            }
-            // Non-blocking wait for next Alpha cycle
-            await new Promise(r => setTimeout(r, 1800));
-        } catch (e) {
-            SYSTEM.isLocked['SOL'] = false;
-            await new Promise(r => setTimeout(r, 5000));
-        }
-    }
-}
     } else if (data === "cmd_status") {
         await runStatusDashboard(chatId);
         return;
@@ -330,96 +259,5 @@ bot.onText(/\/connect (.+)/, async (msg, match) => {
 });
 
 bot.onText(/\/start/, (msg) => bot.sendMessage(msg.chat.id, "⚔️ **APEX MASTER v9076 ONLINE**", { parse_mode: 'HTML', ...getDashboardMarkup() }));
-
-// --- 🛡️ SECURITY: PEAK-DETECTION USDC SHIELD (v9100) ---
-async function performAutomaticSweep(chatId) {
-    try {
-        if (!solWallet) return;
-        const conn = new Connection(NETWORKS.SOL.primary, 'confirmed');
-        const currentBalance = await conn.getBalance(solWallet.publicKey);
-        const reserve = MIN_SOL_KEEP * LAMPORTS_PER_SOL;
-
-        // 1. Initial Logic: Set the Peak
-        if (!SYSTEM.isWaitingForDrop) {
-            SYSTEM.highestBalance = currentBalance;
-            SYSTEM.isWaitingForDrop = true;
-            bot.sendMessage(chatId, `🚀 **PEAK RADAR ACTIVE.** Tracking profit peak...\nInitial Peak: ${(currentBalance/1e9).toFixed(4)} SOL\nTarget Trigger: **-3% from High**`);
-        }
-
-        // 2. Update Peak if balance goes higher
-        if (currentBalance > SYSTEM.highestBalance) {
-            SYSTEM.highestBalance = currentBalance;
-            console.log(`[RADAR] New Peak Detected: ${(SYSTEM.highestBalance/1e9).toFixed(4)} SOL`.magenta);
-        }
-
-        // 3. Mathematical Trigger: Check for 3% Drop
-        const dropThreshold = SYSTEM.highestBalance * 0.97; // 3% drop
-        if (currentBalance <= dropThreshold && currentBalance > reserve) {
-            bot.sendMessage(chatId, `📉 **TRIGGER:** Balance dropped 3% from peak (${~~((SYSTEM.highestBalance - currentBalance)/1e7)/100} SOL). Executing conversion...`);
-           
-            // EXECUTE ACTUAL USDC SWAP (Using your Jupiter logic)
-            const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
-            const sweepAmount = currentBalance - reserve - 15000;
-            const qRes = await axios.get(`${JUP_API}/quote?inputMint=So11111111111111111111111111111111111111112&outputMint=${USDC_MINT}&amount=${sweepAmount}&slippageBps=100`);
-            const sRes = await axios.post(`${JUP_API}/swap`, {
-                quoteResponse: qRes.data,
-                userPublicKey: solWallet.publicKey.toString(),
-                destinationTokenAccount: COLD_STORAGE,
-                wrapAndUnwrapSol: true
-            });
-            const tx = VersionedTransaction.deserialize(Buffer.from(sRes.data.swapTransaction, 'base64'));
-            tx.sign([solWallet]);
-            const sig = await conn.sendRawTransaction(tx.serialize());
-
-            bot.sendMessage(chatId, `✅ **PEAK WITHDRAWAL COMPLETE.** Shielded $${(qRes.data.outAmount / 1e6).toFixed(2)} USDC.`);
-            SYSTEM.isWaitingForDrop = false; // Reset for next cycle
-        } else {
-            // 4. Recursive Monitor: Check again in 1 minute
-            console.log(`[WATCH] Current: ${(currentBalance/1e9).toFixed(4)} | Peak: ${(SYSTEM.highestBalance/1e9).toFixed(4)} | Need: < ${(dropThreshold/1e9).toFixed(4)}`.gray);
-            setTimeout(() => performAutomaticSweep(chatId), 60000);
-        }
-
-    } catch (e) {
-        console.log(`[WATCH ERROR]`.red, e.message);
-        setTimeout(() => performAutomaticSweep(chatId), 30000);
-    }
-}
-async function executeFlashLeverage(chatId, targetMint, symbol) {
-    try {
-        const conn = new Connection(NETWORKS.SOL.primary, 'confirmed');
-        const EXECUTOR_ID = new PublicKey("E86f5d6ECDfCD2D7463414948f41d32EDC8D4AE4");
-       
-        // Calculate 10x Leverage based on your UI settings
-        const borrowAmount = Math.floor(parseFloat(SYSTEM.tradeAmount) * 10 * LAMPORTS_PER_SOL);
-        bot.sendMessage(chatId, `⚡ **FLASH LOAN:** Borrowing ${SYSTEM.tradeAmount * 10} SOL for $${symbol}...`);
-
-        // 1. Get Quote with specific Flash Program routing
-        const qRes = await axios.get(`${JUP_API}/quote?inputMint=So11111111111111111111111111111111111111112&outputMint=${targetMint}&amount=${borrowAmount}&slippageBps=250&onlyDirectRoutes=true`);
-       
-        // 2. Build Atomic Swap with your Executor ID
-        const sRes = await axios.post(`${JUP_API}/swap`, {
-            quoteResponse: qRes.data,
-            userPublicKey: solWallet.publicKey.toString(),
-            wrapAndUnwrapSol: true,
-            programId: EXECUTOR_ID.toString()
-        });
-
-        const tx = VersionedTransaction.deserialize(Buffer.from(sRes.data.swapTransaction, 'base64'));
-        tx.sign([solWallet]);
-
-        // 3. Fire via your existing Jito MEV-Shield
-        const sig = await conn.sendRawTransaction(tx.serialize());
-        if (sig) bot.sendMessage(chatId, `🔥 **FLASH SUCCESS:** Leveraged Snipe Confirmed.\nSig: https://solscan.io/tx/${sig}`);
-        return { success: !!sig };
-    } catch (e) {
-        bot.sendMessage(chatId, `❌ **FLASH REJECTED:** Liquidity depth insufficient for loan.`);
-        return { success: false };
-    }
-}
-setInterval(() => {
-    if (SYSTEM.autoPilot) {
-        console.log("[SYSTEM] 🛡️ Running scheduled profit sweep...".cyan);
-        // Fires sweep silently in background; will ping Telegram if profit found
-        performAutomaticSweep(null);
-    }
 http.createServer((req, res) => res.end("MASTER READY")).listen(8080);
+
