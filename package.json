@@ -1,29 +1,15 @@
 {
-  "name": "titan-flash-engine",
-  "version": "204.6.0",
-  "description": "AI-Driven Deterministic Flash Loan Arbitrage Bot (JS Unified)",
-  "main": "server.js",
+  "name": "gemini-telegram-atomic-bot",
+  "version": "1.0.0",
+  "description": "Atomic High-Low Bot with Telegram Interface",
+  "main": "index.js",
   "scripts": {
-    "start": "node server.js",
-    "setup": "npm install"
+    "start": "node index.js"
   },
   "dependencies": {
-    "ethers": "6.7.1",
-    "axios": "^1.6.0",
-    "sentiment": "^5.0.2",
-    "dotenv": "^16.4.1",
-    "colors": "^1.4.0",
-    "@flashbots/ethers-provider-bundle": "^1.0.0",
-    "node-telegram-bot-api": "^0.66.0",
-    "ws": "^8.18.0",
-    "@solana/web3.js": "^1.88.0",
-    "bip39": "^3.1.0",
-    "ed25519-hd-key": "^1.3.0",
-    "cross-fetch": "^4.0.0",
-    "@triton-one/yellowstone-grpc": "^1.0.0",
-    "bs58": "^5.0.0"
-  },
-  "engines": {
-    "node": ">=18.0.0"
+    "@google/generative-ai": "^0.21.0",
+    "better-sqlite3": "^11.3.0",
+    "dotenv": "^16.4.5",
+    "telegraf": "^4.16.3"
   }
 }
